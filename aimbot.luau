@@ -3,7 +3,6 @@ local rs = game:GetService("RunService")
 local uis = game:GetService("UserInputService")
 local lp = plrs.LocalPlayer
 local cam = workspace.CurrentCamera
-local mouse = lp:GetMouse()
 
 -- defaults
 getgenv().show_circle = getgenv().show_circle or false
@@ -23,47 +22,111 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
 
--- mousemoverel detection
+-- ============================================
+-- UNIVERSAL MOUSE MOVEREL (YUB-X, Xeno, etc.)
+-- ============================================
 local mousemoverel_func = nil
 local function getMouseMoveRel()
     if mousemoverel_func then return mousemoverel_func end
     
+    -- Try global first
     if typeof(mousemoverel) == "function" then
         mousemoverel_func = mousemoverel
+        print("[Xorfhook] Using global mousemoverel")
+    -- Try syn
     elseif typeof(syn) == "table" and typeof(syn.mousemoverel) == "function" then
         mousemoverel_func = syn.mousemoverel
+        print("[Xorfhook] Using syn.mousemoverel")
+    -- Try fluxus
     elseif typeof(fluxus) == "table" and typeof(fluxus.mousemoverel) == "function" then
         mousemoverel_func = fluxus.mousemoverel
+        print("[Xorfhook] Using fluxus.mousemoverel")
+    -- Try KRNL
     elseif typeof(KRNL) == "table" and typeof(KRNL.mousemoverel) == "function" then
         mousemoverel_func = KRNL.mousemoverel
+        print("[Xorfhook] Using KRNL.mousemoverel")
+    -- Try YUB-X specific
     elseif typeof(YUBX) == "table" and typeof(YUBX.mousemoverel) == "function" then
         mousemoverel_func = YUBX.mousemoverel
+        print("[Xorfhook] Using YUBX.mousemoverel")
+    -- Try Xeno specific
     elseif typeof(Xeno) == "table" and typeof(Xeno.mousemoverel) == "function" then
         mousemoverel_func = Xeno.mousemoverel
+        print("[Xorfhook] Using Xeno.mousemoverel")
+    -- Try alternative names
+    elseif typeof(mousemove) == "function" then
+        mousemoverel_func = mousemove
+        print("[Xorfhook] Using mousemove")
+    elseif typeof(MoveMouse) == "function" then
+        mousemoverel_func = MoveMouse
+        print("[Xorfhook] Using MoveMouse")
+    -- Try VirtualInputManager fallback
+    else
+        local VirtualInputManager = game:GetService("VirtualInputManager")
+        mousemoverel_func = function(x, y)
+            local absX = x + (uis:GetMouseLocation().X)
+            local absY = y + (uis:GetMouseLocation().Y)
+            VirtualInputManager:SendMouseMoveEvent(absX, absY, game)
+        end
+        print("[Xorfhook] Using VirtualInputManager fallback")
     end
     
     return mousemoverel_func
 end
 
--- Drawing
-local DrawingLib = Drawing or {}
-local circle = nil
+-- Test mousemoverel immediately
+task.spawn(function()
+    task.wait(1)
+    local mm = getMouseMoveRel()
+    if mm then
+        print("[Xorfhook] MouseMoveRel ready!")
+    else
+        warn("[Xorfhook] MouseMoveRel NOT FOUND - Aimbot may not work!")
+    end
+end)
 
+-- ============================================
+-- UNIVERSAL DRAWING SETUP
+-- ============================================
+local circle = nil
 local function setupCircle()
-    if typeof(DrawingLib.new) == "function" then
-        circle = DrawingLib.new("Circle")
-        circle.Thickness = 2
-        circle.Visible = false
-        circle.Color = Color3.fromRGB(255, 50, 50)
-        circle.Transparency = 0.5
-        circle.Filled = false
-        circle.NumSides = 64
+    -- Try to get Drawing library
+    local DrawingLib = nil
+    
+    if typeof(Drawing) == "table" then
+        DrawingLib = Drawing
+    elseif typeof(getgenv().Drawing) == "table" then
+        DrawingLib = getgenv().Drawing
+    end
+    
+    if DrawingLib and typeof(DrawingLib.new) == "function" then
+        local success, result = pcall(function()
+            local c = DrawingLib.new("Circle")
+            c.Thickness = 2
+            c.Visible = false
+            c.Color = Color3.fromRGB(255, 50, 50)
+            c.Transparency = 0.5
+            c.Filled = false
+            c.NumSides = 64
+            return c
+        end)
+        
+        if success then
+            circle = result
+            print("[Xorfhook] FOV Circle ready")
+        else
+            warn("[Xorfhook] Failed to create circle: " .. tostring(result))
+        end
+    else
+        warn("[Xorfhook] Drawing library not available")
     end
 end
 
 setupCircle()
 
--- Wall check
+-- ============================================
+-- TARGETING FUNCTIONS
+-- ============================================
 local function is_visible(part)
     if not part or not part.Parent then return false end
     
@@ -85,7 +148,6 @@ local function is_visible(part)
     return true
 end
 
--- Get target part
 local function getTargetPart(character)
     local hitPart = getgenv().HitPart or "Head"
     local part = character:FindFirstChild(hitPart)
@@ -99,7 +161,6 @@ local function getTargetPart(character)
     return part
 end
 
--- Target acquisition
 local function get_target()
     local target = nil
     local dist = getgenv().FOV
@@ -151,7 +212,6 @@ local triggerbotDebounce = false
 local function checkTriggerbot()
     if not getgenv().Triggerbot or triggerbotDebounce then return end
     
-    -- Raycast from camera to check if looking at player
     local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Blacklist
@@ -169,19 +229,30 @@ local function checkTriggerbot()
                 local humanoid = character:FindFirstChildOfClass("Humanoid")
                 
                 if humanoid and humanoid.Health > 0 then
-                    -- Team check
                     if getgenv().TeamCheck and (player.Team == lp.Team or player.TeamColor == lp.TeamColor) then
                         return
                     end
                     
-                    -- Fire!
                     triggerbotDebounce = true
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
-                        mouse1press()
-                        task.wait(0.01)
-                        mouse1release()
+                        -- Try multiple mouse click methods
+                        if mouse1press and mouse1release then
+                            mouse1press()
+                            task.wait(0.01)
+                            mouse1release()
+                        elseif typeof(syn) == "table" and syn.mouse1press then
+                            syn.mouse1press()
+                            task.wait(0.01)
+                            syn.mouse1release()
+                        else
+                            -- Fallback to VirtualInputManager
+                            local VirtualInputManager = game:GetService("VirtualInputManager")
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                            task.wait(0.01)
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                        end
                         task.wait(0.05)
                         triggerbotDebounce = false
                     end)
@@ -195,12 +266,14 @@ end
 -- SILENT AIM
 -- ============================================
 local silentAimTarget = nil
-local originalFireServer = nil
-local hookedRemote = nil
 
 local function setupSilentAim()
-    if not WeaponRemotes then return end
+    if not WeaponRemotes then 
+        warn("[Xorfhook] Weapon remotes not found")
+        return 
+    end
     
+    -- Hook all weapon remotes
     for _, remote in pairs(WeaponRemotes:GetChildren()) do
         if remote:IsA("RemoteEvent") then
             local oldFire = remote.FireServer
@@ -290,7 +363,16 @@ local connection = rs.RenderStepped:Connect(function()
 
                 local mouseMoveRel = getMouseMoveRel()
                 if mouseMoveRel then
-                    mouseMoveRel(x, y)
+                    -- YUB-X might need integers
+                    local success, err = pcall(function()
+                        mouseMoveRel(math.floor(x), math.floor(y))
+                    end)
+                    if not success then
+                        -- Try with floats if integers fail
+                        pcall(function()
+                            mouseMoveRel(x, y)
+                        end)
+                    end
                 end
             end
         end
@@ -302,3 +384,4 @@ local connection = rs.RenderStepped:Connect(function()
 end)
 
 getgenv().XorfhookAimbotConnection = connection
+print("[Xorfhook] Aimbot module loaded")

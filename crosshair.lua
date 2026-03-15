@@ -1,10 +1,10 @@
--- Custom Crosshair for Xorfhook - FIXED VERSION
+-- Simple Crosshair using ScreenGui (More reliable than Drawing)
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
 local lp = Players.LocalPlayer
 
--- Initialize settings
+-- Settings
 getgenv().CrosshairEnabled = getgenv().CrosshairEnabled or false
 getgenv().CrosshairColor = getgenv().CrosshairColor or Color3.fromRGB(255, 255, 255)
 getgenv().CrosshairSize = getgenv().CrosshairSize or 10
@@ -13,205 +13,142 @@ getgenv().CrosshairGap = getgenv().CrosshairGap or 4
 getgenv().CrosshairDot = getgenv().CrosshairDot or true
 getgenv().CrosshairOutline = getgenv().CrosshairOutline or true
 
--- Drawing objects
-local crosshairParts = {}
-local connection = nil
+-- GUI elements
+local screenGui = nil
+local lines = {}
+local dot = nil
 
--- Create drawing with better error handling
-local function createDrawing(type)
-    if not Drawing then 
-        warn("[Xorfhook Crosshair] Drawing library not available")
-        return nil 
+-- Create crosshair using Frame GUI (works in all executors)
+local function createCrosshair()
+    -- Clean up old
+    if screenGui then
+        pcall(function() screenGui:Destroy() end)
     end
     
-    local success, result = pcall(function()
-        return Drawing.new(type)
-    end)
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "XorfhookCrosshair"
+    screenGui.Parent = lp:WaitForChild("PlayerGui")
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
     
-    if success then
-        return result
-    else
-        warn("[Xorfhook Crosshair] Failed to create " .. type .. ": " .. tostring(result))
-        return nil
-    end
-end
-
--- Setup crosshair parts
-local function setupCrosshair()
-    -- Clean up old parts
-    for _, part in pairs(crosshairParts) do
-        if part then
-            pcall(function() part:Remove() end)
-        end
-    end
-    crosshairParts = {}
-    
-    -- Create 4 lines (top, bottom, left, right)
-    for i = 1, 4 do
-        local line = createDrawing("Line")
-        if line then
-            line.Visible = false
-            line.Transparency = 1
-            table.insert(crosshairParts, line)
-        end
-    end
-    
-    -- Create center dot
-    local dot = createDrawing("Circle")
-    if dot then
-        dot.Visible = false
-        dot.Filled = true
-        dot.Transparency = 1
-        dot.NumSides = 16
-        crosshairParts.Dot = dot
-    end
-    
-    -- Create outlines (4 lines + dot)
-    if getgenv().CrosshairOutline then
-        for i = 1, 4 do
-            local outline = createDrawing("Line")
-            if outline then
-                outline.Visible = false
-                outline.Color = Color3.fromRGB(0, 0, 0)
-                outline.Transparency = 1
-                table.insert(crosshairParts, outline)
-            end
-        end
-        
-        local dotOutline = createDrawing("Circle")
-        if dotOutline then
-            dotOutline.Visible = false
-            dotOutline.Filled = true
-            dotOutline.Color = Color3.fromRGB(0, 0, 0)
-            dotOutline.Transparency = 1
-            dotOutline.NumSides = 16
-            crosshairParts.DotOutline = dotOutline
-        end
-    end
-end
-
--- Initial setup
-setupCrosshair()
-
--- Update crosshair position and style
-local function updateCrosshair()
-    if not getgenv().CrosshairEnabled then
-        for _, part in pairs(crosshairParts) do
-            if part then
-                part.Visible = false
-            end
-        end
-        return
-    end
-    
-    -- Check if Drawing is available
-    if not Drawing then return end
-    
-    local screenCenter = UserInputService:GetMouseLocation()
     local size = getgenv().CrosshairSize or 10
     local thickness = getgenv().CrosshairThickness or 2
     local gap = getgenv().CrosshairGap or 4
     local color = getgenv().CrosshairColor or Color3.fromRGB(255, 255, 255)
-    local outlineEnabled = getgenv().CrosshairOutline
-    local showDot = getgenv().CrosshairDot
+    local outline = getgenv().CrosshairOutline
     
-    -- Calculate positions
-    local cx, cy = screenCenter.X, screenCenter.Y
+    -- Create lines
+    lines = {}
     
-    -- Line configurations: {startX, startY, endX, endY}
-    local lineConfigs = {
-        {cx, cy - gap - size, cx, cy - gap},           -- Top
-        {cx, cy + gap, cx, cy + gap + size},           -- Bottom
-        {cx - gap - size, cy, cx - gap, cy},           -- Left
-        {cx + gap, cy, cx + gap + size, cy}            -- Right
-    }
-    
-    -- Update main lines
-    for i = 1, 4 do
-        local line = crosshairParts[i]
-        if line then
-            local config = lineConfigs[i]
-            line.Visible = true
-            line.From = Vector2.new(config[1], config[2])
-            line.To = Vector2.new(config[3], config[4])
-            line.Color = color
-            line.Thickness = thickness
-        end
-    end
-    
-    -- Update outlines (indices 5-8 if they exist)
-    if outlineEnabled then
-        for i = 5, 8 do
-            local outline = crosshairParts[i]
-            if outline then
-                local config = lineConfigs[i - 4]
-                outline.Visible = true
-                outline.From = Vector2.new(config[1], config[2])
-                outline.To = Vector2.new(config[3], config[4])
-                outline.Thickness = thickness + 2
-            end
-        end
-    else
-        for i = 5, 8 do
-            local outline = crosshairParts[i]
-            if outline then
-                outline.Visible = false
-            end
-        end
-    end
-    
-    -- Update center dot
-    local dot = crosshairParts.Dot
-    local dotOutline = crosshairParts.DotOutline
-    
-    if showDot and dot then
-        dot.Visible = true
-        dot.Position = Vector2.new(cx, cy)
-        dot.Radius = math.max(thickness, 2)
-        dot.Color = color
+    local function createLine(name, pos, size)
+        local frame = Instance.new("Frame")
+        frame.Name = name
+        frame.BackgroundColor3 = color
+        frame.BorderSizePixel = 0
+        frame.Size = size
+        frame.Position = pos
+        frame.AnchorPoint = Vector2.new(0.5, 0.5)
+        frame.Parent = screenGui
         
-        if outlineEnabled and dotOutline then
-            dotOutline.Visible = true
-            dotOutline.Position = Vector2.new(cx, cy)
-            dotOutline.Radius = dot.Radius + 1
-        elseif dotOutline then
-            dotOutline.Visible = false
+        if outline then
+            frame.BorderSizePixel = 1
+            frame.BorderColor3 = Color3.fromRGB(0, 0, 0)
         end
-    else
-        if dot then dot.Visible = false end
-        if dotOutline then dotOutline.Visible = false end
+        
+        return frame
+    end
+    
+    -- Top line
+    table.insert(lines, createLine("Top", 
+        UDim2.new(0.5, 0, 0.5, -gap - size/2), 
+        UDim2.new(0, thickness, 0, size)))
+    
+    -- Bottom line
+    table.insert(lines, createLine("Bottom", 
+        UDim2.new(0.5, 0, 0.5, gap + size/2), 
+        UDim2.new(0, thickness, 0, size)))
+    
+    -- Left line
+    table.insert(lines, createLine("Left", 
+        UDim2.new(0.5, -gap - size/2, 0.5, 0), 
+        UDim2.new(0, size, 0, thickness)))
+    
+    -- Right line
+    table.insert(lines, createLine("Right", 
+        UDim2.new(0.5, gap + size/2, 0.5, 0), 
+        UDim2.new(0, size, 0, thickness)))
+    
+    -- Center dot
+    if getgenv().CrosshairDot then
+        dot = Instance.new("Frame")
+        dot.Name = "Dot"
+        dot.BackgroundColor3 = color
+        dot.BorderSizePixel = 0
+        dot.Size = UDim2.new(0, math.max(thickness, 3), 0, math.max(thickness, 3))
+        dot.Position = UDim2.new(0.5, 0, 0.5, 0)
+        dot.AnchorPoint = Vector2.new(0.5, 0.5)
+        dot.Parent = screenGui
+        
+        -- Make it circular
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = dot
+        
+        if outline then
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = Color3.fromRGB(0, 0, 0)
+            stroke.Thickness = 1
+            stroke.Parent = dot
+        end
     end
 end
 
--- Re-setup when settings change (for outline toggle)
-local lastOutlineSetting = getgenv().CrosshairOutline
-
--- Main loop
-connection = RunService.RenderStepped:Connect(function()
-    -- Check if we need to re-setup (outline setting changed)
-    if getgenv().CrosshairOutline ~= lastOutlineSetting then
-        lastOutlineSetting = getgenv().CrosshairOutline
-        setupCrosshair()
+-- Update crosshair
+local function updateCrosshair()
+    if not getgenv().CrosshairEnabled then
+        if screenGui then
+            screenGui.Enabled = false
+        end
+        return
     end
     
-    local success, err = pcall(updateCrosshair)
-    if not success then
-        warn("[Xorfhook Crosshair] Error: " .. tostring(err))
+    if not screenGui or not screenGui.Parent then
+        createCrosshair()
     end
+    
+    if screenGui then
+        screenGui.Enabled = true
+        
+        -- Update color if changed
+        local color = getgenv().CrosshairColor or Color3.fromRGB(255, 255, 255)
+        for _, line in pairs(lines) do
+            if line then
+                line.BackgroundColor3 = color
+            end
+        end
+        if dot then
+            dot.BackgroundColor3 = color
+        end
+    end
+end
+
+-- Initial creation
+createCrosshair()
+
+-- Update loop
+local connection = RunService.RenderStepped:Connect(function()
+    pcall(updateCrosshair)
 end)
 
 -- Cleanup
 getgenv().XorfhookCrosshairConnection = connection
 getgenv().XorfhookCrosshairCleanup = function()
-    for _, part in pairs(crosshairParts) do
-        if part then
-            pcall(function() part:Remove() end)
-        end
+    if screenGui then
+        pcall(function() screenGui:Destroy() end)
     end
-    crosshairParts = {}
     if connection then
         connection:Disconnect()
     end
 end
 
-print("[Xorfhook] Crosshair loaded")
+print("[Xorfhook] Crosshair loaded (GUI version)")

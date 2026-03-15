@@ -3,24 +3,27 @@ local rs = game:GetService("RunService")
 local uis = game:GetService("UserInputService")
 local lp = plrs.LocalPlayer
 local cam = workspace.CurrentCamera
+local mouse = lp:GetMouse()
 
--- defaults (GUI will overwrite these)
+-- defaults
 getgenv().show_circle = getgenv().show_circle or false
 getgenv().Aimbot = getgenv().Aimbot or false
 getgenv().SilentAim = getgenv().SilentAim or false
 getgenv().SilentAimChance = getgenv().SilentAimChance or 100
+getgenv().Triggerbot = getgenv().Triggerbot or false
+getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
 getgenv().Smoothness = getgenv().Smoothness or 1
 getgenv().FOV = getgenv().FOV or 180
 getgenv().TeamCheck = getgenv().TeamCheck ~= false
 getgenv().WallCheck = getgenv().WallCheck ~= false
 getgenv().HitPart = getgenv().HitPart or "Head"
 
--- Rivals-specific: Get gun remote
+-- Rivals-specific
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
 
--- Universal mousemoverel detection
+-- mousemoverel detection
 local mousemoverel_func = nil
 local function getMouseMoveRel()
     if mousemoverel_func then return mousemoverel_func end
@@ -42,7 +45,7 @@ local function getMouseMoveRel()
     return mousemoverel_func
 end
 
--- Drawing setup
+-- Drawing
 local DrawingLib = Drawing or {}
 local circle = nil
 
@@ -108,14 +111,12 @@ local function get_target()
             local part = getTargetPart(v.Character)
 
             if humanoid and humanoid.Health > 0 and part then
-                -- Team check (Rivals uses TeamColor or Team)
                 if getgenv().TeamCheck then
                     if v.Team == lp.Team or v.TeamColor == lp.TeamColor then
                         continue
                     end
                 end
 
-                -- Wall check
                 if getgenv().WallCheck and not is_visible(part) then
                     continue
                 end
@@ -143,73 +144,61 @@ local function get_target()
 end
 
 -- ============================================
--- SILENT AIM FOR RIVALS
+-- TRIGGERBOT
+-- ============================================
+local triggerbotDebounce = false
+
+local function checkTriggerbot()
+    if not getgenv().Triggerbot or triggerbotDebounce then return end
+    
+    -- Raycast from camera to check if looking at player
+    local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {lp.Character}
+    
+    local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+    
+    if result then
+        local hit = result.Instance
+        local character = hit:FindFirstAncestorOfClass("Model")
+        
+        if character then
+            local player = plrs:GetPlayerFromCharacter(character)
+            if player and player ~= lp then
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                
+                if humanoid and humanoid.Health > 0 then
+                    -- Team check
+                    if getgenv().TeamCheck and (player.Team == lp.Team or player.TeamColor == lp.TeamColor) then
+                        return
+                    end
+                    
+                    -- Fire!
+                    triggerbotDebounce = true
+                    local delay = getgenv().TriggerbotDelay or 0
+                    
+                    task.delay(delay / 1000, function()
+                        mouse1press()
+                        task.wait(0.01)
+                        mouse1release()
+                        task.wait(0.05)
+                        triggerbotDebounce = false
+                    end)
+                end
+            end
+        end
+    end
+end
+
+-- ============================================
+-- SILENT AIM
 -- ============================================
 local silentAimTarget = nil
 local originalFireServer = nil
 local hookedRemote = nil
 
 local function setupSilentAim()
-    if not WeaponRemotes then
-        warn("[Xorfhook] Weapon remotes not found")
-        return
-    end
-    
-    -- Find the shoot remote (common names in Rivals)
-    local shootRemote = WeaponRemotes:WaitForChild("Shoot", 5) or 
-                       WeaponRemotes:WaitForChild("Fire", 5) or
-                       WeaponRemotes:FindFirstChildWhichIsA("RemoteEvent")
-    
-    if not shootRemote then
-        warn("[Xorfhook] Shoot remote not found")
-        return
-    end
-    
-    hookedRemote = shootRemote
-    originalFireServer = shootRemote.FireServer
-    
-    -- Hook FireServer
-    shootRemote.FireServer = function(self, ...)
-        if self ~= hookedRemote then
-            return originalFireServer(self, ...)
-        end
-        
-        local args = {...}
-        
-        -- Check if silent aim is enabled and we have a target
-        if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
-            -- Rivals typically sends: {Position = Vector3, [other data]}
-            -- We need to modify the position in the args
-            
-            for i, arg in ipairs(args) do
-                if typeof(arg) == "Vector3" then
-                    -- Direct position argument
-                    args[i] = silentAimTarget.Position
-                elseif typeof(arg) == "table" then
-                    -- Table with position data (most common in Rivals)
-                    for k, v in pairs(arg) do
-                        if typeof(v) == "Vector3" then
-                            arg[k] = silentAimTarget.Position
-                        elseif typeof(v) == "CFrame" then
-                            arg[k] = CFrame.new(silentAimTarget.Position)
-                        elseif k == "Hit" or k == "Target" then
-                            arg[k] = silentAimTarget.Part
-                        end
-                    end
-                elseif typeof(arg) == "CFrame" then
-                    args[i] = CFrame.new(silentAimTarget.Position)
-                end
-            end
-        end
-        
-        return originalFireServer(self, unpack(args))
-    end
-    
-    print("[Xorfhook] Silent Aim hooked to:", shootRemote.Name)
-end
-
--- Alternative: Hook all weapon remotes if specific one not found
-local function setupUniversalSilentAim()
     if not WeaponRemotes then return end
     
     for _, remote in pairs(WeaponRemotes:GetChildren()) do
@@ -240,20 +229,14 @@ local function setupUniversalSilentAim()
         end
     end
     
-    print("[Xorfhook] Universal Silent Aim enabled")
+    print("[Xorfhook] Silent Aim enabled")
 end
 
--- Try to setup silent aim
 task.spawn(function()
-    task.wait(2) -- Wait for game to load
-    local success, err = pcall(setupSilentAim)
-    if not success then
-        warn("[Xorfhook] Specific silent aim failed, trying universal:", err)
-        pcall(setupUniversalSilentAim)
-    end
+    task.wait(2)
+    pcall(setupSilentAim)
 end)
 
--- Update silent aim target
 rs.RenderStepped:Connect(function()
     if getgenv().SilentAim then
         silentAimTarget = get_target()
@@ -263,7 +246,7 @@ rs.RenderStepped:Connect(function()
 end)
 
 -- ============================================
--- MAIN AIMBOT LOOP
+-- MAIN LOOP
 -- ============================================
 local connection = rs.RenderStepped:Connect(function()
     local success, err = pcall(function()
@@ -276,20 +259,24 @@ local connection = rs.RenderStepped:Connect(function()
                 circle.Radius = getgenv().FOV
                 circle.Position = uis:GetMouseLocation()
                 
-                -- Color based on mode and target
                 if getgenv().SilentAim and silentAimTarget then
-                    circle.Color = Color3.fromRGB(0, 255, 0) -- Green: Silent aim locked
+                    circle.Color = Color3.fromRGB(0, 255, 0)
                     circle.Filled = true
                     circle.Transparency = 0.3
-                elseif getgenv().Aimbot then
-                    circle.Color = Color3.fromRGB(255, 50, 50) -- Red: Regular aimbot
+                else
+                    circle.Color = Color3.fromRGB(255, 50, 50)
                     circle.Filled = false
                     circle.Transparency = 0.5
                 end
             end
         end
 
-        -- Regular Aimbot (only if silent aim is off and right mouse held)
+        -- Triggerbot
+        if getgenv().Triggerbot then
+            checkTriggerbot()
+        end
+
+        -- Regular Aimbot
         if getgenv().Aimbot and not getgenv().SilentAim and uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = get_target()
 

@@ -49,7 +49,7 @@ rs.RenderStepped:Connect(function()
     circle.Radius = getgenv().FOV
     circle.Position = uis:GetMouseLocation()
 
-    if uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) and getgenv().Aimbot then -- change MouseButton2 to anything else if you don't want to lock with holding right click
+    if getgenv().Aimbot and Options.AimKey:GetState() then -- change MouseButton2 to anything else if you don't want to lock with holding right click
         local target = get_target()
         
         if target then

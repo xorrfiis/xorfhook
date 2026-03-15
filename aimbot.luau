@@ -23,44 +23,28 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
 
 -- ============================================
--- UNIVERSAL MOUSE MOVEREL (YUB-X, Xeno, etc.)
+-- OPTIMIZED MOUSE MOVEREL
 -- ============================================
 local mousemoverel_func = nil
 local function getMouseMoveRel()
     if mousemoverel_func then return mousemoverel_func end
     
-    -- Try global first
     if typeof(mousemoverel) == "function" then
         mousemoverel_func = mousemoverel
-        print("[Xorfhook] Using global mousemoverel")
-    -- Try syn
     elseif typeof(syn) == "table" and typeof(syn.mousemoverel) == "function" then
         mousemoverel_func = syn.mousemoverel
-        print("[Xorfhook] Using syn.mousemoverel")
-    -- Try fluxus
     elseif typeof(fluxus) == "table" and typeof(fluxus.mousemoverel) == "function" then
         mousemoverel_func = fluxus.mousemoverel
-        print("[Xorfhook] Using fluxus.mousemoverel")
-    -- Try KRNL
     elseif typeof(KRNL) == "table" and typeof(KRNL.mousemoverel) == "function" then
         mousemoverel_func = KRNL.mousemoverel
-        print("[Xorfhook] Using KRNL.mousemoverel")
-    -- Try YUB-X specific
     elseif typeof(YUBX) == "table" and typeof(YUBX.mousemoverel) == "function" then
         mousemoverel_func = YUBX.mousemoverel
-        print("[Xorfhook] Using YUBX.mousemoverel")
-    -- Try Xeno specific
     elseif typeof(Xeno) == "table" and typeof(Xeno.mousemoverel) == "function" then
         mousemoverel_func = Xeno.mousemoverel
-        print("[Xorfhook] Using Xeno.mousemoverel")
-    -- Try alternative names
     elseif typeof(mousemove) == "function" then
         mousemoverel_func = mousemove
-        print("[Xorfhook] Using mousemove")
     elseif typeof(MoveMouse) == "function" then
         mousemoverel_func = MoveMouse
-        print("[Xorfhook] Using MoveMouse")
-    -- Try VirtualInputManager fallback
     else
         local VirtualInputManager = game:GetService("VirtualInputManager")
         mousemoverel_func = function(x, y)
@@ -68,36 +52,19 @@ local function getMouseMoveRel()
             local absY = y + (uis:GetMouseLocation().Y)
             VirtualInputManager:SendMouseMoveEvent(absX, absY, game)
         end
-        print("[Xorfhook] Using VirtualInputManager fallback")
     end
     
     return mousemoverel_func
 end
 
--- Test mousemoverel immediately
-task.spawn(function()
-    task.wait(1)
-    local mm = getMouseMoveRel()
-    if mm then
-        print("[Xorfhook] MouseMoveRel ready!")
-    else
-        warn("[Xorfhook] MouseMoveRel NOT FOUND - Aimbot may not work!")
-    end
-end)
-
 -- ============================================
--- UNIVERSAL DRAWING SETUP
+-- OPTIMIZED DRAWING (only create if needed)
 -- ============================================
 local circle = nil
 local function setupCircle()
-    -- Try to get Drawing library
-    local DrawingLib = nil
+    if circle then return end -- Don't recreate
     
-    if typeof(Drawing) == "table" then
-        DrawingLib = Drawing
-    elseif typeof(getgenv().Drawing) == "table" then
-        DrawingLib = getgenv().Drawing
-    end
+    local DrawingLib = Drawing or getgenv().Drawing
     
     if DrawingLib and typeof(DrawingLib.new) == "function" then
         local success, result = pcall(function()
@@ -107,40 +74,45 @@ local function setupCircle()
             c.Color = Color3.fromRGB(255, 50, 50)
             c.Transparency = 0.5
             c.Filled = false
-            c.NumSides = 64
+            c.NumSides = 32 -- Reduced from 64 for performance
             return c
         end)
         
         if success then
             circle = result
-            print("[Xorfhook] FOV Circle ready")
-        else
-            warn("[Xorfhook] Failed to create circle: " .. tostring(result))
         end
-    else
-        warn("[Xorfhook] Drawing library not available")
     end
 end
 
 setupCircle()
 
 -- ============================================
--- TARGETING FUNCTIONS
+-- CACHED VARIABLES FOR PERFORMANCE
 -- ============================================
+local lastTarget = nil
+local lastTargetTime = 0
+local targetCacheDuration = 0.05 -- Cache target for 50ms (20 updates/sec instead of 60)
+local frameCount = 0
+local skipFrames = 2 -- Only run every 3rd frame
+
+-- Pre-allocate RaycastParams (don't create every call)
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+raycastParams.IgnoreWater = true
+
 local function is_visible(part)
     if not part or not part.Parent then return false end
     
+    -- Update filter (cheaper than creating new)
+    raycastParams.FilterDescendantsInstances = {lp.Character, cam}
+    
     local origin = cam.CFrame.Position
     local direction = (part.Position - origin)
-    local distance = direction.Magnitude
-    direction = direction.Unit * distance
-
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {lp.Character, cam}
-    params.IgnoreWater = true
-
-    local result = workspace:Raycast(origin, direction, params)
+    
+    -- Early exit: too far
+    if direction.Magnitude > 1000 then return false end
+    
+    local result = workspace:Raycast(origin, direction.Unit * direction.Magnitude, raycastParams)
     
     if result then
         return result.Instance:IsDescendantOf(part.Parent)
@@ -149,75 +121,106 @@ local function is_visible(part)
 end
 
 local function getTargetPart(character)
-    local hitPart = getgenv().HitPart or "Head"
-    local part = character:FindFirstChild(hitPart)
+    -- Direct lookup first (fastest)
+    local hitPart = character:FindFirstChild(getgenv().HitPart or "Head")
     
-    if not part then
-        part = character:FindFirstChild("Head") or 
-               character:FindFirstChild("HumanoidRootPart") or
-               character:FindFirstChild("UpperTorso")
+    if not hitPart then
+        hitPart = character:FindFirstChild("Head") or 
+                  character:FindFirstChild("HumanoidRootPart")
     end
     
-    return part
+    return hitPart
 end
 
+-- ============================================
+-- OPTIMIZED TARGET ACQUISITION
+-- ============================================
 local function get_target()
+    local now = tick()
+    
+    -- Return cached target if recent
+    if lastTarget and (now - lastTargetTime) < targetCacheDuration then
+        -- Verify target still valid
+        if lastTarget.Part and lastTarget.Part.Parent and lastTarget.Player.Parent then
+            local humanoid = lastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                return lastTarget
+            end
+        end
+    end
+    
     local target = nil
     local dist = getgenv().FOV
     local mousePos = uis:GetMouseLocation()
-
-    for _, v in pairs(plrs:GetPlayers()) do
-        if v ~= lp and v.Character then
-            local humanoid = v.Character:FindFirstChildOfClass("Humanoid")
-            local part = getTargetPart(v.Character)
-
-            if humanoid and humanoid.Health > 0 and part then
-                if getgenv().TeamCheck then
-                    if v.Team == lp.Team or v.TeamColor == lp.TeamColor then
-                        continue
+    local myTeam = lp.Team
+    local myTeamColor = lp.TeamColor
+    
+    -- Get players list once
+    local players = plrs:GetPlayers()
+    
+    for i = 1, #players do
+        local v = players[i]
+        if v ~= lp then
+            local character = v.Character
+            if character then
+                -- Fast reject: no humanoid
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    -- Fast reject: team check (cheaper than getting part)
+                    if getgenv().TeamCheck then
+                        if v.Team == myTeam or v.TeamColor == myTeamColor then
+                            continue
+                        end
                     end
-                end
-
-                if getgenv().WallCheck and not is_visible(part) then
-                    continue
-                end
-
-                local pos, on_screen = cam:WorldToViewportPoint(part.Position)
-
-                if on_screen then
-                    local mag = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
-
-                    if mag < dist then
-                        dist = mag
-                        target = {
-                            Player = v,
-                            Part = part,
-                            Position = part.Position,
-                            ScreenPos = pos
-                        }
+                    
+                    local part = getTargetPart(character)
+                    if part then
+                        -- Fast reject: distance check before raycast
+                        local pos, on_screen = cam:WorldToViewportPoint(part.Position)
+                        
+                        if on_screen then
+                            local mag = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                            
+                            if mag < dist and mag < 1000 then -- Max 1000 pixels from mouse
+                                -- Expensive check last: wall check
+                                if not getgenv().WallCheck or is_visible(part) then
+                                    dist = mag
+                                    target = {
+                                        Player = v,
+                                        Part = part,
+                                        Position = part.Position,
+                                        ScreenPos = pos
+                                    }
+                                end
+                            end
+                        end
                     end
                 end
             end
         end
     end
-
+    
+    -- Cache result
+    lastTarget = target
+    lastTargetTime = now
+    
     return target
 end
 
 -- ============================================
--- TRIGGERBOT
+-- TRIGGERBOT (optimized)
 -- ============================================
 local triggerbotDebounce = false
+local triggerParams = RaycastParams.new()
+triggerParams.FilterType = Enum.RaycastFilterType.Blacklist
 
 local function checkTriggerbot()
     if not getgenv().Triggerbot or triggerbotDebounce then return end
     
-    local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Blacklist
-    params.FilterDescendantsInstances = {lp.Character}
+    triggerParams.FilterDescendantsInstances = {lp.Character}
     
-    local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+    local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
+    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, triggerParams) -- Reduced from 1000
     
     if result then
         local hit = result.Instance
@@ -237,17 +240,12 @@ local function checkTriggerbot()
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
-                        -- Try multiple mouse click methods
+                        -- Simple mouse click
                         if mouse1press and mouse1release then
                             mouse1press()
                             task.wait(0.01)
                             mouse1release()
-                        elseif typeof(syn) == "table" and syn.mouse1press then
-                            syn.mouse1press()
-                            task.wait(0.01)
-                            syn.mouse1release()
                         else
-                            -- Fallback to VirtualInputManager
                             local VirtualInputManager = game:GetService("VirtualInputManager")
                             VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
                             task.wait(0.01)
@@ -263,45 +261,47 @@ local function checkTriggerbot()
 end
 
 -- ============================================
--- SILENT AIM
+-- SILENT AIM (optimized)
 -- ============================================
 local silentAimTarget = nil
+local hooked = false
 
 local function setupSilentAim()
-    if not WeaponRemotes then 
-        warn("[Xorfhook] Weapon remotes not found")
-        return 
-    end
+    if hooked or not WeaponRemotes then return end
     
-    -- Hook all weapon remotes
     for _, remote in pairs(WeaponRemotes:GetChildren()) do
-        if remote:IsA("RemoteEvent") then
+        if remote:IsA("RemoteEvent") and not remote:GetAttribute("XorfhookHooked") then
+            remote:SetAttribute("XorfhookHooked", true)
+            
             local oldFire = remote.FireServer
             remote.FireServer = function(self, ...)
-                if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
-                    local args = {...}
-                    
-                    for i, arg in ipairs(args) do
-                        if typeof(arg) == "Vector3" then
-                            args[i] = silentAimTarget.Position
-                        elseif typeof(arg) == "table" then
-                            for k, v in pairs(arg) do
-                                if typeof(v) == "Vector3" then
-                                    arg[k] = silentAimTarget.Position
-                                elseif k == "Hit" or k == "Target" then
-                                    arg[k] = silentAimTarget.Part
+                if self:GetAttribute("XorfhookHooked") then
+                    if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
+                        local args = {...}
+                        
+                        for i, arg in ipairs(args) do
+                            if typeof(arg) == "Vector3" then
+                                args[i] = silentAimTarget.Position
+                            elseif typeof(arg) == "table" then
+                                for k, v in pairs(arg) do
+                                    if typeof(v) == "Vector3" then
+                                        arg[k] = silentAimTarget.Position
+                                    elseif k == "Hit" or k == "Target" then
+                                        arg[k] = silentAimTarget.Part
+                                    end
                                 end
                             end
                         end
+                        
+                        return oldFire(self, unpack(args))
                     end
-                    
-                    return oldFire(self, unpack(args))
                 end
                 return oldFire(self, ...)
             end
         end
     end
     
+    hooked = true
     print("[Xorfhook] Silent Aim enabled")
 end
 
@@ -310,20 +310,31 @@ task.spawn(function()
     pcall(setupSilentAim)
 end)
 
-rs.RenderStepped:Connect(function()
-    if getgenv().SilentAim then
-        silentAimTarget = get_target()
-    else
-        silentAimTarget = nil
+-- Update silent aim target less frequently
+task.spawn(function()
+    while true do
+        task.wait(0.05) -- 20 updates/sec instead of 60
+        if getgenv().SilentAim then
+            silentAimTarget = get_target()
+        else
+            silentAimTarget = nil
+        end
     end
 end)
 
 -- ============================================
--- MAIN LOOP
+-- MAIN LOOP (OPTIMIZED)
 -- ============================================
 local connection = rs.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    
+    -- Skip frames for performance
+    if frameCount % (skipFrames + 1) ~= 0 then
+        return
+    end
+    
     local success, err = pcall(function()
-        -- Update circle
+        -- Update circle (cheap)
         if circle then
             local shouldShow = (getgenv().Aimbot or getgenv().SilentAim) and getgenv().show_circle
             circle.Visible = shouldShow
@@ -344,12 +355,12 @@ local connection = rs.RenderStepped:Connect(function()
             end
         end
 
-        -- Triggerbot
-        if getgenv().Triggerbot then
+        -- Triggerbot (every frame for responsiveness, but cheap)
+        if getgenv().Triggerbot and frameCount % 2 == 0 then -- Every other frame
             checkTriggerbot()
         end
 
-        -- Regular Aimbot
+        -- Regular Aimbot (only when right mouse held)
         if getgenv().Aimbot and not getgenv().SilentAim and uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = get_target()
 
@@ -363,16 +374,9 @@ local connection = rs.RenderStepped:Connect(function()
 
                 local mouseMoveRel = getMouseMoveRel()
                 if mouseMoveRel then
-                    -- YUB-X might need integers
-                    local success, err = pcall(function()
-                        mouseMoveRel(math.floor(x), math.floor(y))
+                    pcall(function()
+                        mouseMoveRel(x, y)
                     end)
-                    if not success then
-                        -- Try with floats if integers fail
-                        pcall(function()
-                            mouseMoveRel(x, y)
-                        end)
-                    end
                 end
             end
         end
@@ -384,4 +388,4 @@ local connection = rs.RenderStepped:Connect(function()
 end)
 
 getgenv().XorfhookAimbotConnection = connection
-print("[Xorfhook] Aimbot module loaded")
+print("[Xorfhook] Optimized Aimbot loaded")

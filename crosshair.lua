@@ -1,4 +1,4 @@
--- Custom Crosshair for Xorfhook
+-- Custom Crosshair for Xorfhook - FIXED VERSION
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
@@ -17,15 +17,23 @@ getgenv().CrosshairOutline = getgenv().CrosshairOutline or true
 local crosshairParts = {}
 local connection = nil
 
--- Safe Drawing creation
+-- Create drawing with better error handling
 local function createDrawing(type)
-    if typeof(Drawing) == "table" and typeof(Drawing.new) == "function" then
-        local success, result = pcall(Drawing.new, type)
-        if success then
-            return result
-        end
+    if not Drawing then 
+        warn("[Xorfhook Crosshair] Drawing library not available")
+        return nil 
     end
-    return nil
+    
+    local success, result = pcall(function()
+        return Drawing.new(type)
+    end)
+    
+    if success then
+        return result
+    else
+        warn("[Xorfhook Crosshair] Failed to create " .. type .. ": " .. tostring(result))
+        return nil
+    end
 end
 
 -- Setup crosshair parts
@@ -54,6 +62,7 @@ local function setupCrosshair()
         dot.Visible = false
         dot.Filled = true
         dot.Transparency = 1
+        dot.NumSides = 16
         crosshairParts.Dot = dot
     end
     
@@ -75,11 +84,13 @@ local function setupCrosshair()
             dotOutline.Filled = true
             dotOutline.Color = Color3.fromRGB(0, 0, 0)
             dotOutline.Transparency = 1
+            dotOutline.NumSides = 16
             crosshairParts.DotOutline = dotOutline
         end
     end
 end
 
+-- Initial setup
 setupCrosshair()
 
 -- Update crosshair position and style
@@ -92,6 +103,9 @@ local function updateCrosshair()
         end
         return
     end
+    
+    -- Check if Drawing is available
+    if not Drawing then return end
     
     local screenCenter = UserInputService:GetMouseLocation()
     local size = getgenv().CrosshairSize or 10
@@ -169,8 +183,17 @@ local function updateCrosshair()
     end
 end
 
+-- Re-setup when settings change (for outline toggle)
+local lastOutlineSetting = getgenv().CrosshairOutline
+
 -- Main loop
 connection = RunService.RenderStepped:Connect(function()
+    -- Check if we need to re-setup (outline setting changed)
+    if getgenv().CrosshairOutline ~= lastOutlineSetting then
+        lastOutlineSetting = getgenv().CrosshairOutline
+        setupCrosshair()
+    end
+    
     local success, err = pcall(updateCrosshair)
     if not success then
         warn("[Xorfhook Crosshair] Error: " .. tostring(err))
@@ -185,6 +208,7 @@ getgenv().XorfhookCrosshairCleanup = function()
             pcall(function() part:Remove() end)
         end
     end
+    crosshairParts = {}
     if connection then
         connection:Disconnect()
     end

@@ -1,26 +1,30 @@
 local plrs = game:GetService("Players")
 local rs = game:GetService("RunService")
-local uis = game:GetService("UserInputType")
+local uis = game:GetService("UserInputService")
 local lp = plrs.LocalPlayer
 local cam = workspace.CurrentCamera
 
 -- defaults (GUI will overwrite these)
 getgenv().show_circle = getgenv().show_circle or false
 getgenv().Aimbot = getgenv().Aimbot or false
-getgenv().SilentAim = getgenv().SilentAim or false -- NEW: Silent Aim toggle
-getgenv().SilentAimChance = getgenv().SilentAimChance or 100 -- NEW: Hit chance %
+getgenv().SilentAim = getgenv().SilentAim or false
+getgenv().SilentAimChance = getgenv().SilentAimChance or 100
 getgenv().Smoothness = getgenv().Smoothness or 1
 getgenv().FOV = getgenv().FOV or 180
 getgenv().TeamCheck = getgenv().TeamCheck ~= false
 getgenv().WallCheck = getgenv().WallCheck ~= false
-getgenv().HitPart = getgenv().HitPart or "Head" -- NEW: Target part (Head, Torso, etc.)
+getgenv().HitPart = getgenv().HitPart or "Head"
+
+-- Rivals-specific: Get gun remote
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
 
 -- Universal mousemoverel detection
 local mousemoverel_func = nil
 local function getMouseMoveRel()
     if mousemoverel_func then return mousemoverel_func end
     
-    -- Check various executor implementations
     if typeof(mousemoverel) == "function" then
         mousemoverel_func = mousemoverel
     elseif typeof(syn) == "table" and typeof(syn.mousemoverel) == "function" then
@@ -33,20 +37,14 @@ local function getMouseMoveRel()
         mousemoverel_func = YUBX.mousemoverel
     elseif typeof(Xeno) == "table" and typeof(Xeno.mousemoverel) == "function" then
         mousemoverel_func = Xeno.mousemoverel
-    elseif typeof(hookfunction) == "function" then
-        -- Fallback: use input injection if available
-        local VirtualInputManager = game:GetService("VirtualInputManager")
-        mousemoverel_func = function(x, y)
-            VirtualInputManager:SendMouseMoveEvent(x, y, game)
-        end
     end
     
     return mousemoverel_func
 end
 
--- Drawing setup with fallback
+-- Drawing setup
 local DrawingLib = Drawing or {}
-local circle
+local circle = nil
 
 local function setupCircle()
     if typeof(DrawingLib.new) == "function" then
@@ -56,14 +54,13 @@ local function setupCircle()
         circle.Color = Color3.fromRGB(255, 50, 50)
         circle.Transparency = 0.5
         circle.Filled = false
-    else
-        warn("[Xorfhook] Drawing library not available")
+        circle.NumSides = 64
     end
 end
 
 setupCircle()
 
--- Wall check with improved raycasting
+-- Wall check
 local function is_visible(part)
     if not part or not part.Parent then return false end
     
@@ -78,67 +75,63 @@ local function is_visible(part)
     params.IgnoreWater = true
 
     local result = workspace:Raycast(origin, direction, params)
-
+    
     if result then
-        local instance = result.Instance
-        local isVisible = instance:IsDescendantOf(part.Parent) or 
-                         (instance.Parent and instance.Parent:IsDescendantOf(part.Parent))
-        return isVisible
+        return result.Instance:IsDescendantOf(part.Parent)
     end
-
-    return true -- No obstruction found
+    return true
 end
 
--- Get target part based on settings
+-- Get target part
 local function getTargetPart(character)
     local hitPart = getgenv().HitPart or "Head"
     local part = character:FindFirstChild(hitPart)
     
     if not part then
-        -- Fallback priority
         part = character:FindFirstChild("Head") or 
                character:FindFirstChild("HumanoidRootPart") or
-               character:FindFirstChild("UpperTorso") or
-               character:FindFirstChild("Torso")
+               character:FindFirstChild("UpperTorso")
     end
     
     return part
 end
 
--- Target acquisition (shared between aimbot and silent aim)
+-- Target acquisition
 local function get_target()
     local target = nil
     local dist = getgenv().FOV
-    local mouse = uis:GetMouseLocation()
+    local mousePos = uis:GetMouseLocation()
 
     for _, v in pairs(plrs:GetPlayers()) do
         if v ~= lp and v.Character then
             local humanoid = v.Character:FindFirstChildOfClass("Humanoid")
-            local head = getTargetPart(v.Character)
+            local part = getTargetPart(v.Character)
 
-            if humanoid and humanoid.Health > 0 and head then
-                -- Team check
-                if getgenv().TeamCheck and v.Team == lp.Team then
-                    continue
+            if humanoid and humanoid.Health > 0 and part then
+                -- Team check (Rivals uses TeamColor or Team)
+                if getgenv().TeamCheck then
+                    if v.Team == lp.Team or v.TeamColor == lp.TeamColor then
+                        continue
+                    end
                 end
 
                 -- Wall check
-                if getgenv().WallCheck and not is_visible(head) then
+                if getgenv().WallCheck and not is_visible(part) then
                     continue
                 end
 
-                local pos, on_screen = cam:WorldToViewportPoint(head.Position)
+                local pos, on_screen = cam:WorldToViewportPoint(part.Position)
 
                 if on_screen then
-                    local mag = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
+                    local mag = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
 
                     if mag < dist then
                         dist = mag
                         target = {
                             Player = v,
-                            Part = head,
-            Position = head.Position,
-            ScreenPos = pos
+                            Part = part,
+                            Position = part.Position,
+                            ScreenPos = pos
                         }
                     end
                 end
@@ -150,125 +143,163 @@ local function get_target()
 end
 
 -- ============================================
--- SILENT AIM IMPLEMENTATION
+-- SILENT AIM FOR RIVALS
 -- ============================================
-local SilentAimConnection
-local originalNamecall
 local silentAimTarget = nil
+local originalFireServer = nil
+local hookedRemote = nil
 
 local function setupSilentAim()
-    -- Hook into remote events for bullet firing
-    local mt = getrawmetatable(game)
-    if not mt then
-        warn("[Xorfhook] Silent Aim: Cannot get metatable")
+    if not WeaponRemotes then
+        warn("[Xorfhook] Weapon remotes not found")
         return
     end
     
-    setreadonly(mt, false)
-    originalNamecall = mt.__namecall
+    -- Find the shoot remote (common names in Rivals)
+    local shootRemote = WeaponRemotes:WaitForChild("Shoot", 5) or 
+                       WeaponRemotes:WaitForChild("Fire", 5) or
+                       WeaponRemotes:FindFirstChildWhichIsA("RemoteEvent")
     
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
+    if not shootRemote then
+        warn("[Xorfhook] Shoot remote not found")
+        return
+    end
+    
+    hookedRemote = shootRemote
+    originalFireServer = shootRemote.FireServer
+    
+    -- Hook FireServer
+    shootRemote.FireServer = function(self, ...)
+        if self ~= hookedRemote then
+            return originalFireServer(self, ...)
+        end
+        
         local args = {...}
         
         -- Check if silent aim is enabled and we have a target
         if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
-            -- Intercept Raycast/FindPartOnRay for bullet hit registration
-            if method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                -- Modify ray direction to hit target
-                local origin = args[1]
-                if typeof(origin) == "Vector3" and silentAimTarget.Position then
-                    local direction = (silentAimTarget.Position - origin).Unit * 1000
-                    args[2] = direction
-                    return originalNamecall(self, unpack(args))
+            -- Rivals typically sends: {Position = Vector3, [other data]}
+            -- We need to modify the position in the args
+            
+            for i, arg in ipairs(args) do
+                if typeof(arg) == "Vector3" then
+                    -- Direct position argument
+                    args[i] = silentAimTarget.Position
+                elseif typeof(arg) == "table" then
+                    -- Table with position data (most common in Rivals)
+                    for k, v in pairs(arg) do
+                        if typeof(v) == "Vector3" then
+                            arg[k] = silentAimTarget.Position
+                        elseif typeof(v) == "CFrame" then
+                            arg[k] = CFrame.new(silentAimTarget.Position)
+                        elseif k == "Hit" or k == "Target" then
+                            arg[k] = silentAimTarget.Part
+                        end
+                    end
+                elseif typeof(arg) == "CFrame" then
+                    args[i] = CFrame.new(silentAimTarget.Position)
                 end
             end
-            
-            -- Intercept FireServer for gun remotes (common in Rivals-style games)
-            if method == "FireServer" then
-                local remoteName = tostring(self)
-                -- Common gun remote names
-                if remoteName:lower():find("shoot") or 
-                   remoteName:lower():find("fire") or 
-                   remoteName:lower():find("hit") or
-                   remoteName:lower():find("damage") or
-                   remoteName:lower():find("bullet") then
+        end
+        
+        return originalFireServer(self, unpack(args))
+    end
+    
+    print("[Xorfhook] Silent Aim hooked to:", shootRemote.Name)
+end
+
+-- Alternative: Hook all weapon remotes if specific one not found
+local function setupUniversalSilentAim()
+    if not WeaponRemotes then return end
+    
+    for _, remote in pairs(WeaponRemotes:GetChildren()) do
+        if remote:IsA("RemoteEvent") then
+            local oldFire = remote.FireServer
+            remote.FireServer = function(self, ...)
+                if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
+                    local args = {...}
                     
-                    -- Try to modify hit position in args
-                    for i, arg in pairs(args) do
+                    for i, arg in ipairs(args) do
                         if typeof(arg) == "Vector3" then
                             args[i] = silentAimTarget.Position
-                        elseif typeof(arg) == "CFrame" then
-                            args[i] = CFrame.new(silentAimTarget.Position)
-                        elseif typeof(arg) == "Instance" and arg:IsA("BasePart") then
-                            args[i] = silentAimTarget.Part
                         elseif typeof(arg) == "table" then
-                            -- Deep scan for position data
                             for k, v in pairs(arg) do
                                 if typeof(v) == "Vector3" then
                                     arg[k] = silentAimTarget.Position
-                                elseif typeof(v) == "Instance" and v:IsA("BasePart") then
+                                elseif k == "Hit" or k == "Target" then
                                     arg[k] = silentAimTarget.Part
                                 end
                             end
                         end
                     end
+                    
+                    return oldFire(self, unpack(args))
                 end
+                return oldFire(self, ...)
             end
         end
-        
-        return originalNamecall(self, ...)
-    end)
+    end
     
-    setreadonly(mt, true)
-    
-    -- Update target loop
-    SilentAimConnection = rs.RenderStepped:Connect(function()
-        if getgenv().SilentAim then
-            silentAimTarget = get_target()
-        else
-            silentAimTarget = nil
-        end
-    end)
+    print("[Xorfhook] Universal Silent Aim enabled")
 end
 
--- Setup silent aim
-local silentAimSuccess, silentAimErr = pcall(setupSilentAim)
-if not silentAimSuccess then
-    warn("[Xorfhook] Silent Aim setup failed: " .. tostring(silentAimErr))
-end
+-- Try to setup silent aim
+task.spawn(function()
+    task.wait(2) -- Wait for game to load
+    local success, err = pcall(setupSilentAim)
+    if not success then
+        warn("[Xorfhook] Specific silent aim failed, trying universal:", err)
+        pcall(setupUniversalSilentAim)
+    end
+end)
 
--- Main loop with proper error handling
-local connection
-connection = rs.RenderStepped:Connect(function()
+-- Update silent aim target
+rs.RenderStepped:Connect(function()
+    if getgenv().SilentAim then
+        silentAimTarget = get_target()
+    else
+        silentAimTarget = nil
+    end
+end)
+
+-- ============================================
+-- MAIN AIMBOT LOOP
+-- ============================================
+local connection = rs.RenderStepped:Connect(function()
     local success, err = pcall(function()
         -- Update circle
         if circle then
-            circle.Visible = (getgenv().Aimbot or getgenv().SilentAim) and getgenv().show_circle
-            if circle.Visible then
+            local shouldShow = (getgenv().Aimbot or getgenv().SilentAim) and getgenv().show_circle
+            circle.Visible = shouldShow
+            
+            if shouldShow then
                 circle.Radius = getgenv().FOV
                 circle.Position = uis:GetMouseLocation()
                 
-                -- Change color based on mode
+                -- Color based on mode and target
                 if getgenv().SilentAim and silentAimTarget then
-                    circle.Color = Color3.fromRGB(50, 255, 50) -- Green for silent aim lock
+                    circle.Color = Color3.fromRGB(0, 255, 0) -- Green: Silent aim locked
+                    circle.Filled = true
+                    circle.Transparency = 0.3
                 elseif getgenv().Aimbot then
-                    circle.Color = Color3.fromRGB(255, 50, 50) -- Red for regular aimbot
+                    circle.Color = Color3.fromRGB(255, 50, 50) -- Red: Regular aimbot
+                    circle.Filled = false
+                    circle.Transparency = 0.5
                 end
             end
         end
 
-        -- Regular Aimbot logic (only if silent aim is off)
+        -- Regular Aimbot (only if silent aim is off and right mouse held)
         if getgenv().Aimbot and not getgenv().SilentAim and uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = get_target()
 
-            if target and target.Part and target.Part.Parent then
+            if target and target.Part then
                 local pos = cam:WorldToViewportPoint(target.Position)
-                local mouse_loc = uis:GetMouseLocation()
+                local mousePos = uis:GetMouseLocation()
 
                 local smooth = math.clamp(getgenv().Smoothness, 0.1, 5)
-                local x = (pos.X - mouse_loc.X) / smooth
-                local y = (pos.Y - mouse_loc.Y) / smooth
+                local x = (pos.X - mousePos.X) / smooth
+                local y = (pos.Y - mousePos.Y) / smooth
 
                 local mouseMoveRel = getMouseMoveRel()
                 if mouseMoveRel then
@@ -279,10 +310,8 @@ connection = rs.RenderStepped:Connect(function()
     end)
     
     if not success then
-        warn("[Xorfhook Aimbot] Error: " .. tostring(err))
+        warn("[Xorfhook Aimbot] Error:", tostring(err))
     end
 end)
 
--- Cleanup on error or script destruction
 getgenv().XorfhookAimbotConnection = connection
-getgenv().XorfhookSilentAimConnection = SilentAimConnection

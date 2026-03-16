@@ -6,16 +6,19 @@ getgenv().ESPName = getgenv().ESPName or true
 getgenv().ESPHealth = getgenv().ESPHealth or true
 getgenv().ESPDistance = getgenv().ESPDistance or false
 getgenv().SpeedEnabled = getgenv().SpeedEnabled or false
-getgenv().Aimbot = getgenv().Aimbot or false
-getgenv().SilentAim = getgenv().SilentAim or false
-getgenv().SilentAimChance = getgenv().SilentAimChance or 100
-getgenv().Triggerbot = getgenv().Triggerbot or false
+
+-- AIMBOT - NEW CLEAN NAMES
+getgenv().AimbotEnabled = getgenv().AimbotEnabled or false
+getgenv().AimbotSmoothness = getgenv().AimbotSmoothness or 1
+getgenv().AimbotFOV = getgenv().AimbotFOV or 180
+getgenv().AimbotTeamCheck = getgenv().AimbotTeamCheck ~= false
+getgenv().AimbotWallCheck = getgenv().AimbotWallCheck ~= false
+getgenv().AimbotHitPart = getgenv().AimbotHitPart or "Head"
+getgenv().AimbotShowFOV = getgenv().AimbotShowFOV or false
+
+-- TRIGGERBOT
+getgenv().TriggerbotEnabled = getgenv().TriggerbotEnabled or false
 getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
-getgenv().Smoothness = getgenv().Smoothness or 1
-getgenv().FOV = getgenv().FOV or 180
-getgenv().TeamCheck = getgenv().TeamCheck ~= false
-getgenv().WallCheck = getgenv().WallCheck ~= false
-getgenv().HitPart = getgenv().HitPart or "Head"
 
 -- Crosshair settings
 getgenv().CrosshairEnabled = getgenv().CrosshairEnabled or false
@@ -554,9 +557,11 @@ UnloadBox:AddButton({
         end
         
         -- Clear global vars
-        getgenv().XorfhookLoaded = false
-        getgenv().SpoofFunctions = nil
-        getgenv().XorfhookFly = nil
+        getgenv().AimbotEnabled = false
+        getgenv().TriggerbotEnabled = false
+        getgenv().ESPEnabled = false
+        getgenv().CrosshairEnabled = false
+        getgenv().FlyEnabled = false
         
         print("[Xorfhook] Unloaded successfully!")
     end,

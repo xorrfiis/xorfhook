@@ -1,116 +1,112 @@
-local plrs = game:GetService("Players")
-local rs = game:GetService("RunService")
-local uis = game:GetService("UserInputService")
-local lp = plrs.LocalPlayer
-local cam = workspace.CurrentCamera
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
--- defaults
-getgenv().show_circle = getgenv().show_circle or false
-getgenv().Aimbot = getgenv().Aimbot or false
-getgenv().SilentAim = getgenv().SilentAim or false
-getgenv().SilentAimVisible = getgenv().SilentAimVisible or false -- NEW: Move camera with silent aim
-getgenv().SilentAimChance = getgenv().SilentAimChance or 100
-getgenv().Triggerbot = getgenv().Triggerbot or false
+-- Settings
+getgenv().AimbotEnabled = getgenv().AimbotEnabled or false
+getgenv().AimbotSmoothness = getgenv().AimbotSmoothness or 1
+getgenv().AimbotFOV = getgenv().AimbotFOV or 180
+getgenv().AimbotTeamCheck = getgenv().AimbotTeamCheck ~= false
+getgenv().AimbotWallCheck = getgenv().AimbotWallCheck ~= false
+getgenv().AimbotHitPart = getgenv().AimbotHitPart or "Head"
+getgenv().AimbotShowFOV = getgenv().AimbotShowFOV or false
+getgenv().TriggerbotEnabled = getgenv().TriggerbotEnabled or false
 getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
-getgenv().Smoothness = getgenv().Smoothness or 1
-getgenv().FOV = getgenv().FOV or 180
-getgenv().TeamCheck = getgenv().TeamCheck ~= false
-getgenv().WallCheck = getgenv().WallCheck ~= false
-getgenv().HitPart = getgenv().HitPart or "Head"
 
--- Rivals-specific
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
-local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
-
--- ============================================
--- MOUSE MOVEREL
--- ============================================
-local mousemoverel_func = nil
-local function getMouseMoveRel()
-    if mousemoverel_func then return mousemoverel_func end
+-- Universal mousemoverel
+local MouseMoveRel = nil
+local function GetMouseMoveRel()
+    if MouseMoveRel then return MouseMoveRel end
     
-    if typeof(mousemoverel) == "function" then
-        mousemoverel_func = mousemoverel
-    elseif typeof(syn) == "table" and typeof(syn.mousemoverel) == "function" then
-        mousemoverel_func = syn.mousemoverel
-    elseif typeof(fluxus) == "table" and typeof(fluxus.mousemoverel) == "function" then
-        mousemoverel_func = fluxus.mousemoverel
-    elseif typeof(KRNL) == "table" and typeof(KRNL.mousemoverel) == "function" then
-        mousemoverel_func = KRNL.mousemoverel
-    elseif typeof(YUBX) == "table" and typeof(YUBX.mousemoverel) == "function" then
-        mousemoverel_func = YUBX.mousemoverel
-    elseif typeof(Xeno) == "table" and typeof(Xeno.mousemoverel) == "function" then
-        mousemoverel_func = Xeno.mousemoverel
-    elseif typeof(mousemove) == "function" then
-        mousemoverel_func = mousemove
-    elseif typeof(MoveMouse) == "function" then
-        mousemoverel_func = MoveMouse
-    else
-        local VirtualInputManager = game:GetService("VirtualInputManager")
-        mousemoverel_func = function(x, y)
-            local absX = x + (uis:GetMouseLocation().X)
-            local absY = y + (uis:GetMouseLocation().Y)
-            VirtualInputManager:SendMouseMoveEvent(absX, absY, game)
+    local options = {
+        mousemoverel,
+        (syn and syn.mousemoverel),
+        (fluxus and fluxus.mousemoverel),
+        (KRNL and KRNL.mousemoverel),
+        (YUBX and YUBX.mousemoverel),
+        (Xeno and Xeno.mousemoverel),
+        (getgenv().mousemoverel),
+        mousemove,
+        MoveMouse
+    }
+    
+    for _, opt in ipairs(options) do
+        if typeof(opt) == "function" then
+            MouseMoveRel = opt
+            print("[Xorfhook Aimbot] mousemoverel found")
+            return MouseMoveRel
         end
     end
     
-    return mousemoverel_func
+    -- Fallback
+    local VIM = game:GetService("VirtualInputManager")
+    MouseMoveRel = function(x, y)
+        local currentPos = UserInputService:GetMouseLocation()
+        VIM:SendMouseMoveEvent(currentPos.X + x, currentPos.Y + y, game)
+    end
+    print("[Xorfhook Aimbot] Using VIM fallback")
+    return MouseMoveRel
 end
 
--- ============================================
--- DRAWING
--- ============================================
-local circle = nil
-local function setupCircle()
-    if circle then return end
+-- Drawing setup
+local FOVCircle = nil
+local function SetupFOVCircle()
+    if FOVCircle then return end
+    if not Drawing then return end
     
-    local DrawingLib = Drawing or getgenv().Drawing
+    local success, result = pcall(function()
+        local circle = Drawing.new("Circle")
+        circle.Visible = false
+        circle.Thickness = 1.5
+        circle.Color = Color3.fromRGB(255, 50, 50)
+        circle.Transparency = 0.7
+        circle.Filled = false
+        circle.NumSides = 32
+        return circle
+    end)
     
-    if DrawingLib and typeof(DrawingLib.new) == "function" then
-        local success, result = pcall(function()
-            local c = DrawingLib.new("Circle")
-            c.Thickness = 2
-            c.Visible = false
-            c.Color = Color3.fromRGB(255, 50, 50)
-            c.Transparency = 0.5
-            c.Filled = false
-            c.NumSides = 32
-            return c
-        end)
-        
-        if success then
-            circle = result
-        end
+    if success then
+        FOVCircle = result
     end
 end
 
-setupCircle()
+SetupFOVCircle()
 
--- ============================================
--- CACHED VARIABLES
--- ============================================
-local lastTarget = nil
-local lastTargetTime = 0
-local targetCacheDuration = 0.05
-local frameCount = 0
-local skipFrames = 2
+-- Get target part
+local function GetTargetPart(character)
+    local partName = getgenv().AimbotHitPart or "Head"
+    local part = character:FindFirstChild(partName)
+    
+    if not part then
+        part = character:FindFirstChild("Head") or 
+               character:FindFirstChild("HumanoidRootPart") or
+               character:FindFirstChild("UpperTorso")
+    end
+    
+    return part
+end
 
-local raycastParams = RaycastParams.new()
-raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-raycastParams.IgnoreWater = true
+-- Wall check
+local WallCheckParams = RaycastParams.new()
+WallCheckParams.FilterType = Enum.RaycastFilterType.Blacklist
+WallCheckParams.IgnoreWater = true
 
-local function is_visible(part)
+local function IsVisible(part)
     if not part or not part.Parent then return false end
     
-    raycastParams.FilterDescendantsInstances = {lp.Character, cam}
+    WallCheckParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
     
-    local origin = cam.CFrame.Position
-    local direction = (part.Position - origin)
+    local origin = Camera.CFrame.Position
+    local targetPos = part.Position
+    local direction = (targetPos - origin)
+    local distance = direction.Magnitude
     
-    if direction.Magnitude > 1000 then return false end
+    if distance > 500 then return false end
     
-    local result = workspace:Raycast(origin, direction.Unit * direction.Magnitude, raycastParams)
+    local result = Workspace:Raycast(origin, direction.Unit * distance, WallCheckParams)
     
     if result then
         return result.Instance:IsDescendantOf(part.Parent)
@@ -118,147 +114,121 @@ local function is_visible(part)
     return true
 end
 
-local function getTargetPart(character)
-    local hitPart = character:FindFirstChild(getgenv().HitPart or "Head")
-    
-    if not hitPart then
-        hitPart = character:FindFirstChild("Head") or 
-                  character:FindFirstChild("HumanoidRootPart")
-    end
-    
-    return hitPart
-end
+-- Get closest target
+local LastTarget = nil
+local LastTargetTime = 0
 
--- ============================================
--- TARGET ACQUISITION
--- ============================================
-local function get_target()
+local function GetTarget()
     local now = tick()
     
-    if lastTarget and (now - lastTargetTime) < targetCacheDuration then
-        if lastTarget.Part and lastTarget.Part.Parent and lastTarget.Player.Parent then
-            local humanoid = lastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
+    -- Cache for 50ms
+    if LastTarget and (now - LastTargetTime) < 0.05 then
+        if LastTarget.Part and LastTarget.Part.Parent then
+            local humanoid = LastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
             if humanoid and humanoid.Health > 0 then
-                return lastTarget
+                return LastTarget
             end
         end
     end
     
-    local target = nil
-    local dist = getgenv().FOV
-    local mousePos = uis:GetMouseLocation()
-    local myTeam = lp.Team
-    local myTeamColor = lp.TeamColor
+    local closestTarget = nil
+    local shortestDistance = getgenv().AimbotFOV or 180
+    local mousePos = UserInputService:GetMouseLocation()
+    local localTeam = LocalPlayer.Team
+    local localTeamColor = LocalPlayer.TeamColor
     
-    local players = plrs:GetPlayers()
+    local allPlayers = Players:GetPlayers()
     
-    for i = 1, #players do
-        local v = players[i]
-        if v ~= lp then
-            local character = v.Character
-            if character then
-                local humanoid = character:FindFirstChildOfClass("Humanoid")
-                if humanoid and humanoid.Health > 0 then
-                    if getgenv().TeamCheck then
-                        if v.Team == myTeam or v.TeamColor == myTeamColor then
-                            continue
-                        end
-                    end
-                    
-                    local part = getTargetPart(character)
-                    if part then
-                        local pos, on_screen = cam:WorldToViewportPoint(part.Position)
-                        
-                        if on_screen then
-                            local mag = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
-                            
-                            if mag < dist and mag < 1000 then
-                                if not getgenv().WallCheck or is_visible(part) then
-                                    dist = mag
-                                    target = {
-                                        Player = v,
-                                        Part = part,
-                                        Position = part.Position,
-                                        ScreenPos = pos
-                                    }
-                                end
-                            end
-                        end
-                    end
-                end
+    for i = 1, #allPlayers do
+        local player = allPlayers[i]
+        if player == LocalPlayer then continue end
+        
+        local character = player.Character
+        if not character then continue end
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        
+        -- Team check
+        if getgenv().AimbotTeamCheck then
+            if player.Team == localTeam or player.TeamColor == localTeamColor then
+                continue
             end
+        end
+        
+        local targetPart = GetTargetPart(character)
+        if not targetPart then continue end
+        
+        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+        if not onScreen then continue end
+        
+        local distanceFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+        
+        if distanceFromMouse < shortestDistance then
+            -- Wall check last
+            if getgenv().AimbotWallCheck and not IsVisible(targetPart) then
+                continue
+            end
+            
+            shortestDistance = distanceFromMouse
+            closestTarget = {
+                Player = player,
+                Part = targetPart,
+                ScreenPosition = Vector2.new(screenPos.X, screenPos.Y)
+            }
         end
     end
     
-    lastTarget = target
-    lastTargetTime = now
+    LastTarget = closestTarget
+    LastTargetTime = now
     
-    return target
+    return closestTarget
 end
 
--- ============================================
--- CAMERA LOCK FOR SILENT AIM
--- ============================================
-local cameraLockActive = false
-local originalCameraCFrame = nil
+-- Triggerbot
+local TriggerDebounce = false
+local TriggerParams = RaycastParams.new()
+TriggerParams.FilterType = Enum.RaycastFilterType.Blacklist
 
-local function lockCameraToTarget(target)
-    if not target or not target.Part then return end
+local function CheckTriggerbot()
+    if not getgenv().TriggerbotEnabled or TriggerDebounce then return end
     
-    -- Calculate look at CFrame
-    local targetPos = target.Position
-    local camPos = cam.CFrame.Position
+    TriggerParams.FilterDescendantsInstances = {LocalPlayer.Character}
     
-    -- Smooth camera movement
-    local targetCFrame = CFrame.new(camPos, targetPos)
-    cam.CFrame = cam.CFrame:Lerp(targetCFrame, 0.3) -- 0.3 = smooth factor
-end
-
--- ============================================
--- TRIGGERBOT
--- ============================================
-local triggerbotDebounce = false
-local triggerParams = RaycastParams.new()
-triggerParams.FilterType = Enum.RaycastFilterType.Blacklist
-
-local function checkTriggerbot()
-    if not getgenv().Triggerbot or triggerbotDebounce then return end
-    
-    triggerParams.FilterDescendantsInstances = {lp.Character}
-    
-    local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
-    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, triggerParams)
+    local ray = Camera:ViewportPointToRay(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y)
+    local result = Workspace:Raycast(ray.Origin, ray.Direction * 500, TriggerParams)
     
     if result then
         local hit = result.Instance
         local character = hit:FindFirstAncestorOfClass("Model")
         
         if character then
-            local player = plrs:GetPlayerFromCharacter(character)
-            if player and player ~= lp then
+            local player = Players:GetPlayerFromCharacter(character)
+            if player and player ~= LocalPlayer then
                 local humanoid = character:FindFirstChildOfClass("Humanoid")
                 
                 if humanoid and humanoid.Health > 0 then
-                    if getgenv().TeamCheck and (player.Team == lp.Team or player.TeamColor == lp.TeamColor) then
+                    if getgenv().AimbotTeamCheck and (player.Team == LocalPlayer.Team or player.TeamColor == LocalPlayer.TeamColor) then
                         return
                     end
                     
-                    triggerbotDebounce = true
+                    TriggerDebounce = true
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
+                        -- Click mouse
                         if mouse1press and mouse1release then
                             mouse1press()
                             task.wait(0.01)
                             mouse1release()
                         else
-                            local VirtualInputManager = game:GetService("VirtualInputManager")
-                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                            local VIM = game:GetService("VirtualInputManager")
+                            VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
                             task.wait(0.01)
-                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                            VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
                         end
                         task.wait(0.05)
-                        triggerbotDebounce = false
+                        TriggerDebounce = false
                     end)
                 end
             end
@@ -266,139 +236,79 @@ local function checkTriggerbot()
     end
 end
 
--- ============================================
--- SILENT AIM WITH CAMERA LOCK
--- ============================================
-local silentAimTarget = nil
-local hooked = false
-
-local function setupSilentAim()
-    if hooked or not WeaponRemotes then return end
-    
-    for _, remote in pairs(WeaponRemotes:GetChildren()) do
-        if remote:IsA("RemoteEvent") and not remote:GetAttribute("XorfhookHooked") then
-            remote:SetAttribute("XorfhookHooked", true)
-            
-            local oldFire = remote.FireServer
-            remote.FireServer = function(self, ...)
-                if self:GetAttribute("XorfhookHooked") then
-                    if getgenv().SilentAim and silentAimTarget and math.random(1, 100) <= (getgenv().SilentAimChance or 100) then
-                        local args = {...}
-                        
-                        for i, arg in ipairs(args) do
-                            if typeof(arg) == "Vector3" then
-                                args[i] = silentAimTarget.Position
-                            elseif typeof(arg) == "table" then
-                                for k, v in pairs(arg) do
-                                    if typeof(v) == "Vector3" then
-                                        arg[k] = silentAimTarget.Position
-                                    elseif k == "Hit" or k == "Target" then
-                                        arg[k] = silentAimTarget.Part
-                                    end
-                                end
-                            end
-                        end
-                        
-                        return oldFire(self, unpack(args))
-                    end
-                end
-                return oldFire(self, ...)
-            end
-        end
-    end
-    
-    hooked = true
-    print("[Xorfhook] Silent Aim enabled")
-end
-
-task.spawn(function()
-    task.wait(2)
-    pcall(setupSilentAim)
-end)
-
--- Update silent aim target
-task.spawn(function()
-    while true do
-        task.wait(0.05)
-        if getgenv().SilentAim then
-            silentAimTarget = get_target()
-        else
-            silentAimTarget = nil
-        end
-    end
-end)
-
--- ============================================
--- MAIN LOOP
--- ============================================
-local connection = rs.RenderStepped:Connect(function()
-    frameCount = frameCount + 1
-    
-    if frameCount % (skipFrames + 1) ~= 0 then
-        return
-    end
+-- Main loop
+local FrameCount = 0
+local Connection = RunService.RenderStepped:Connect(function()
+    FrameCount = FrameCount + 1
     
     local success, err = pcall(function()
-        -- Update circle
-        if circle then
-            local shouldShow = (getgenv().Aimbot or getgenv().SilentAim) and getgenv().show_circle
-            circle.Visible = shouldShow
+        -- Update FOV Circle (every frame for smoothness)
+        if FOVCircle then
+            local showCircle = getgenv().AimbotShowFOV and getgenv().AimbotEnabled
+            FOVCircle.Visible = showCircle
             
-            if shouldShow then
-                circle.Radius = getgenv().FOV
-                circle.Position = uis:GetMouseLocation()
+            if showCircle then
+                FOVCircle.Radius = getgenv().AimbotFOV or 180
+                FOVCircle.Position = UserInputService:GetMouseLocation()
                 
-                if getgenv().SilentAim and silentAimTarget then
-                    circle.Color = Color3.fromRGB(0, 255, 0)
-                    circle.Filled = true
-                    circle.Transparency = 0.3
+                local target = GetTarget()
+                if target then
+                    FOVCircle.Color = Color3.fromRGB(0, 255, 0)
+                    FOVCircle.Filled = true
+                    FOVCircle.Transparency = 0.3
                 else
-                    circle.Color = Color3.fromRGB(255, 50, 50)
-                    circle.Filled = false
-                    circle.Transparency = 0.5
+                    FOVCircle.Color = Color3.fromRGB(255, 50, 50)
+                    FOVCircle.Filled = false
+                    FOVCircle.Transparency = 0.7
                 end
             end
         end
-
-        -- Triggerbot
-        if getgenv().Triggerbot and frameCount % 2 == 0 then
-            checkTriggerbot()
+        
+        -- Triggerbot (every other frame)
+        if getgenv().TriggerbotEnabled and FrameCount % 2 == 0 then
+            CheckTriggerbot()
         end
-
-        -- SILENT AIM WITH CAMERA LOCK
-        if getgenv().SilentAim and silentAimTarget then
-            if getgenv().SilentAimVisible then
-                -- Move camera to target (smooth)
-                lockCameraToTarget(silentAimTarget)
-            end
-        end
-
-        -- Regular Aimbot
-        if getgenv().Aimbot and not getgenv().SilentAim and uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-            local target = get_target()
-
-            if target and target.Part then
-                local pos = cam:WorldToViewportPoint(target.Position)
-                local mousePos = uis:GetMouseLocation()
-
-                local smooth = math.clamp(getgenv().Smoothness, 0.1, 5)
-                local x = (pos.X - mousePos.X) / smooth
-                local y = (pos.Y - mousePos.Y) / smooth
-
-                local mouseMoveRel = getMouseMoveRel()
-                if mouseMoveRel then
-                    pcall(function()
-                        mouseMoveRel(x, y)
+        
+        -- Aimbot (only when right mouse held)
+        if getgenv().AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+            local target = GetTarget()
+            
+            if target and target.ScreenPosition then
+                local mousePos = UserInputService:GetMouseLocation()
+                local smoothness = math.clamp(getgenv().AimbotSmoothness or 1, 0.1, 10)
+                
+                local deltaX = (target.ScreenPosition.X - mousePos.X) / smoothness
+                local deltaY = (target.ScreenPosition.Y - mousePos.Y) / smoothness
+                
+                -- Skip tiny movements
+                if math.abs(deltaX) < 0.5 and math.abs(deltaY) < 0.5 then
+                    return
+                end
+                
+                local mover = GetMouseMoveRel()
+                if mover then
+                    -- Try integer first
+                    local ok = pcall(function()
+                        mover(math.floor(deltaX), math.floor(deltaY))
                     end)
+                    
+                    -- Fallback to float
+                    if not ok then
+                        pcall(function()
+                            mover(deltaX, deltaY)
+                        end)
+                    end
                 end
             end
         end
     end)
     
     if not success then
-        warn("[Xorfhook Aimbot] Error:", tostring(err))
+        warn("[Xorfhook Aimbot] Error: " .. tostring(err))
     end
 end)
 
-getgenv().XorfhookAimbotConnection = connection
-print("[Xorfhook] Aimbot loaded with Visible Silent Aim support")
+-- Cleanup
+getgenv().XorfhookAimbotConnection = Connection
+
+print("[Xorfhook] Aimbot loaded - Right click to aim, enable Triggerbot for auto-shoot")

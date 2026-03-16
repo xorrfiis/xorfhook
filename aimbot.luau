@@ -8,6 +8,7 @@ local cam = workspace.CurrentCamera
 getgenv().show_circle = getgenv().show_circle or false
 getgenv().Aimbot = getgenv().Aimbot or false
 getgenv().SilentAim = getgenv().SilentAim or false
+getgenv().SilentAimVisible = getgenv().SilentAimVisible or false -- NEW: Move camera with silent aim
 getgenv().SilentAimChance = getgenv().SilentAimChance or 100
 getgenv().Triggerbot = getgenv().Triggerbot or false
 getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
@@ -23,7 +24,7 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 local WeaponRemotes = Remotes and Remotes:WaitForChild("Weapon", 10)
 
 -- ============================================
--- OPTIMIZED MOUSE MOVEREL
+-- MOUSE MOVEREL
 -- ============================================
 local mousemoverel_func = nil
 local function getMouseMoveRel()
@@ -58,11 +59,11 @@ local function getMouseMoveRel()
 end
 
 -- ============================================
--- OPTIMIZED DRAWING (only create if needed)
+-- DRAWING
 -- ============================================
 local circle = nil
 local function setupCircle()
-    if circle then return end -- Don't recreate
+    if circle then return end
     
     local DrawingLib = Drawing or getgenv().Drawing
     
@@ -74,7 +75,7 @@ local function setupCircle()
             c.Color = Color3.fromRGB(255, 50, 50)
             c.Transparency = 0.5
             c.Filled = false
-            c.NumSides = 32 -- Reduced from 64 for performance
+            c.NumSides = 32
             return c
         end)
         
@@ -87,15 +88,14 @@ end
 setupCircle()
 
 -- ============================================
--- CACHED VARIABLES FOR PERFORMANCE
+-- CACHED VARIABLES
 -- ============================================
 local lastTarget = nil
 local lastTargetTime = 0
-local targetCacheDuration = 0.05 -- Cache target for 50ms (20 updates/sec instead of 60)
+local targetCacheDuration = 0.05
 local frameCount = 0
-local skipFrames = 2 -- Only run every 3rd frame
+local skipFrames = 2
 
--- Pre-allocate RaycastParams (don't create every call)
 local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
 raycastParams.IgnoreWater = true
@@ -103,13 +103,11 @@ raycastParams.IgnoreWater = true
 local function is_visible(part)
     if not part or not part.Parent then return false end
     
-    -- Update filter (cheaper than creating new)
     raycastParams.FilterDescendantsInstances = {lp.Character, cam}
     
     local origin = cam.CFrame.Position
     local direction = (part.Position - origin)
     
-    -- Early exit: too far
     if direction.Magnitude > 1000 then return false end
     
     local result = workspace:Raycast(origin, direction.Unit * direction.Magnitude, raycastParams)
@@ -121,7 +119,6 @@ local function is_visible(part)
 end
 
 local function getTargetPart(character)
-    -- Direct lookup first (fastest)
     local hitPart = character:FindFirstChild(getgenv().HitPart or "Head")
     
     if not hitPart then
@@ -133,14 +130,12 @@ local function getTargetPart(character)
 end
 
 -- ============================================
--- OPTIMIZED TARGET ACQUISITION
+-- TARGET ACQUISITION
 -- ============================================
 local function get_target()
     local now = tick()
     
-    -- Return cached target if recent
     if lastTarget and (now - lastTargetTime) < targetCacheDuration then
-        -- Verify target still valid
         if lastTarget.Part and lastTarget.Part.Parent and lastTarget.Player.Parent then
             local humanoid = lastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
             if humanoid and humanoid.Health > 0 then
@@ -155,7 +150,6 @@ local function get_target()
     local myTeam = lp.Team
     local myTeamColor = lp.TeamColor
     
-    -- Get players list once
     local players = plrs:GetPlayers()
     
     for i = 1, #players do
@@ -163,10 +157,8 @@ local function get_target()
         if v ~= lp then
             local character = v.Character
             if character then
-                -- Fast reject: no humanoid
                 local humanoid = character:FindFirstChildOfClass("Humanoid")
                 if humanoid and humanoid.Health > 0 then
-                    -- Fast reject: team check (cheaper than getting part)
                     if getgenv().TeamCheck then
                         if v.Team == myTeam or v.TeamColor == myTeamColor then
                             continue
@@ -175,14 +167,12 @@ local function get_target()
                     
                     local part = getTargetPart(character)
                     if part then
-                        -- Fast reject: distance check before raycast
                         local pos, on_screen = cam:WorldToViewportPoint(part.Position)
                         
                         if on_screen then
                             local mag = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
                             
-                            if mag < dist and mag < 1000 then -- Max 1000 pixels from mouse
-                                -- Expensive check last: wall check
+                            if mag < dist and mag < 1000 then
                                 if not getgenv().WallCheck or is_visible(part) then
                                     dist = mag
                                     target = {
@@ -200,7 +190,6 @@ local function get_target()
         end
     end
     
-    -- Cache result
     lastTarget = target
     lastTargetTime = now
     
@@ -208,7 +197,25 @@ local function get_target()
 end
 
 -- ============================================
--- TRIGGERBOT (optimized)
+-- CAMERA LOCK FOR SILENT AIM
+-- ============================================
+local cameraLockActive = false
+local originalCameraCFrame = nil
+
+local function lockCameraToTarget(target)
+    if not target or not target.Part then return end
+    
+    -- Calculate look at CFrame
+    local targetPos = target.Position
+    local camPos = cam.CFrame.Position
+    
+    -- Smooth camera movement
+    local targetCFrame = CFrame.new(camPos, targetPos)
+    cam.CFrame = cam.CFrame:Lerp(targetCFrame, 0.3) -- 0.3 = smooth factor
+end
+
+-- ============================================
+-- TRIGGERBOT
 -- ============================================
 local triggerbotDebounce = false
 local triggerParams = RaycastParams.new()
@@ -220,7 +227,7 @@ local function checkTriggerbot()
     triggerParams.FilterDescendantsInstances = {lp.Character}
     
     local ray = cam:ViewportPointToRay(uis:GetMouseLocation().X, uis:GetMouseLocation().Y)
-    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, triggerParams) -- Reduced from 1000
+    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, triggerParams)
     
     if result then
         local hit = result.Instance
@@ -240,7 +247,6 @@ local function checkTriggerbot()
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
-                        -- Simple mouse click
                         if mouse1press and mouse1release then
                             mouse1press()
                             task.wait(0.01)
@@ -261,7 +267,7 @@ local function checkTriggerbot()
 end
 
 -- ============================================
--- SILENT AIM (optimized)
+-- SILENT AIM WITH CAMERA LOCK
 -- ============================================
 local silentAimTarget = nil
 local hooked = false
@@ -310,10 +316,10 @@ task.spawn(function()
     pcall(setupSilentAim)
 end)
 
--- Update silent aim target less frequently
+-- Update silent aim target
 task.spawn(function()
     while true do
-        task.wait(0.05) -- 20 updates/sec instead of 60
+        task.wait(0.05)
         if getgenv().SilentAim then
             silentAimTarget = get_target()
         else
@@ -323,18 +329,17 @@ task.spawn(function()
 end)
 
 -- ============================================
--- MAIN LOOP (OPTIMIZED)
+-- MAIN LOOP
 -- ============================================
 local connection = rs.RenderStepped:Connect(function()
     frameCount = frameCount + 1
     
-    -- Skip frames for performance
     if frameCount % (skipFrames + 1) ~= 0 then
         return
     end
     
     local success, err = pcall(function()
-        -- Update circle (cheap)
+        -- Update circle
         if circle then
             local shouldShow = (getgenv().Aimbot or getgenv().SilentAim) and getgenv().show_circle
             circle.Visible = shouldShow
@@ -355,12 +360,20 @@ local connection = rs.RenderStepped:Connect(function()
             end
         end
 
-        -- Triggerbot (every frame for responsiveness, but cheap)
-        if getgenv().Triggerbot and frameCount % 2 == 0 then -- Every other frame
+        -- Triggerbot
+        if getgenv().Triggerbot and frameCount % 2 == 0 then
             checkTriggerbot()
         end
 
-        -- Regular Aimbot (only when right mouse held)
+        -- SILENT AIM WITH CAMERA LOCK
+        if getgenv().SilentAim and silentAimTarget then
+            if getgenv().SilentAimVisible then
+                -- Move camera to target (smooth)
+                lockCameraToTarget(silentAimTarget)
+            end
+        end
+
+        -- Regular Aimbot
         if getgenv().Aimbot and not getgenv().SilentAim and uis:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = get_target()
 
@@ -388,4 +401,4 @@ local connection = rs.RenderStepped:Connect(function()
 end)
 
 getgenv().XorfhookAimbotConnection = connection
-print("[Xorfhook] Optimized Aimbot loaded")
+print("[Xorfhook] Aimbot loaded with Visible Silent Aim support")

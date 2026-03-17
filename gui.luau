@@ -87,11 +87,10 @@ local function loadModule(url, name, delay)
     end)
 end
 
--- Load modules with staggered delays
-loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/aimbot.luau", "Aimbot", 0.5)
-loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/esp.luau", "ESP", 1.0)
-loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/crosshair.luau", "Crosshair", 1.5)
-loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/fly.luau", "Fly", 2.0)
+-- Load modules with longer delays
+loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/aimbot.luau", "Aimbot", 2.0)
+loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/esp.luau", "ESP", 4.0)
+loadModule("https://raw.githubusercontent.com/xorrfiis/xorfhook/main/crosshair.luau", "Crosshair", 6.0)
 
 -- ============================================
 -- LIBRARY LOADING

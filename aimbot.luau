@@ -81,14 +81,16 @@ local function IsVisible(part)
     return true
 end
 
--- Get closest target
+-- Get closest target with yielding
 local LastTarget = nil
 local LastTargetTime = 0
+local TargetCache = {}
 
 local function GetTarget()
     local now = tick()
     
-    if LastTarget and (now - LastTargetTime) < 0.05 then
+    -- Use cache
+    if LastTarget and (now - LastTargetTime) < 0.1 then
         if LastTarget.Part and LastTarget.Part.Parent then
             local humanoid = LastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
             if humanoid and humanoid.Health > 0 then
@@ -104,14 +106,22 @@ local function GetTarget()
     local localTeamColor = LocalPlayer.TeamColor
     
     local allPlayers = Players:GetPlayers()
+    local playerCount = #allPlayers
     
-    for i = 1, #allPlayers do
+    -- Process in batches to prevent freezing
+    for i = 1, playerCount do
+        -- Yield every 5 players to prevent lag
+        if i % 5 == 0 then
+            task.wait()
+        end
+        
         local player = allPlayers[i]
         if player == LocalPlayer then continue end
         
         local character = player.Character
         if not character then continue end
         
+        -- Quick checks first
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if not humanoid or humanoid.Health <= 0 then continue end
         
@@ -123,6 +133,10 @@ local function GetTarget()
         
         local targetPart = GetTargetPart(character)
         if not targetPart then continue end
+        
+        -- Distance check before expensive viewport calc
+        local distance = (targetPart.Position - Camera.CFrame.Position).Magnitude
+        if distance > 1000 then continue end
         
         local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
         if not onScreen then continue end
@@ -150,24 +164,19 @@ local function GetTarget()
     return closestTarget
 end
 
--- CFRAME AIM METHOD (Works in YUB-X)
+-- CFRAME AIM METHOD
 local function AimAtTarget(target)
     if not target or not target.WorldPosition then return end
     
     local smoothness = math.clamp(getgenv().AimbotSmoothness or 1, 1, 10)
-    
-    -- Calculate target CFrame
     local targetPos = target.WorldPosition
     local camPos = Camera.CFrame.Position
     
-    -- Create look-at CFrame
     local targetCFrame = CFrame.new(camPos, targetPos)
-    
-    -- Smoothly interpolate
     Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, 1 / smoothness)
 end
 
--- Triggerbot
+-- Triggerbot with debounce
 local TriggerDebounce = false
 local TriggerParams = RaycastParams.new()
 TriggerParams.FilterType = Enum.RaycastFilterType.Blacklist
@@ -198,16 +207,18 @@ local function CheckTriggerbot()
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
-                        if mouse1press and mouse1release then
-                            mouse1press()
-                            task.wait(0.01)
-                            mouse1release()
-                        else
-                            local VIM = game:GetService("VirtualInputManager")
-                            VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                            task.wait(0.01)
-                            VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-                        end
+                        pcall(function()
+                            if mouse1press and mouse1release then
+                                mouse1press()
+                                task.wait(0.01)
+                                mouse1release()
+                            else
+                                local VIM = game:GetService("VirtualInputManager")
+                                VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                                task.wait(0.01)
+                                VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                            end
+                        end)
                         task.wait(0.05)
                         TriggerDebounce = false
                     end)
@@ -217,13 +228,18 @@ local function CheckTriggerbot()
     end
 end
 
--- Main loop
+-- Main loop with frame skipping
 local FrameCount = 0
 local Connection = RunService.RenderStepped:Connect(function()
     FrameCount = FrameCount + 1
     
+    -- Skip frames for performance (run at 20 FPS instead of 60)
+    if FrameCount % 3 ~= 0 then
+        return
+    end
+    
     local success, err = pcall(function()
-        -- Update FOV Circle
+        -- Update FOV Circle (cheap)
         if FOVCircle then
             local showCircle = getgenv().AimbotShowFOV and getgenv().AimbotEnabled
             FOVCircle.Visible = showCircle
@@ -245,15 +261,14 @@ local Connection = RunService.RenderStepped:Connect(function()
             end
         end
         
-        -- Triggerbot
-        if getgenv().TriggerbotEnabled and FrameCount % 2 == 0 then
+        -- Triggerbot (every 6 frames)
+        if getgenv().TriggerbotEnabled and FrameCount % 6 == 0 then
             CheckTriggerbot()
         end
         
-        -- Aimbot using CFrame (YUB-X compatible)
+        -- Aimbot
         if getgenv().AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = GetTarget()
-            
             if target then
                 AimAtTarget(target)
             end
@@ -267,5 +282,5 @@ end)
 
 getgenv().XorfhookAimbotConnection = Connection
 
-print("[Xorfhook] CFrame Aimbot loaded (YUB-X)")
-print("[Xorfhook] Right-click to snap aim to target")
+print("[Xorfhook] Optimized Aimbot loaded")
+print("[Xorfhook] Runs at 20 FPS to prevent lag")

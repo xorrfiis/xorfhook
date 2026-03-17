@@ -1,8 +1,8 @@
--- Simple Crosshair using ScreenGui (More reliable than Drawing)
+-- Crosshair for YUB-X - ScreenGui Version (More Reliable)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local lp = Players.LocalPlayer
+local LocalPlayer = Players.LocalPlayer
 
 -- Settings
 getgenv().CrosshairEnabled = getgenv().CrosshairEnabled or false
@@ -14,22 +14,23 @@ getgenv().CrosshairDot = getgenv().CrosshairDot or true
 getgenv().CrosshairOutline = getgenv().CrosshairOutline or true
 
 -- GUI elements
-local screenGui = nil
-local lines = {}
-local dot = nil
+local ScreenGui = nil
+local Lines = {}
+local Dot = nil
+local Connection = nil
 
--- Create crosshair using Frame GUI (works in all executors)
-local function createCrosshair()
+-- Create crosshair
+local function CreateCrosshair()
     -- Clean up old
-    if screenGui then
-        pcall(function() screenGui:Destroy() end)
+    if ScreenGui then
+        pcall(function() ScreenGui:Destroy() end)
     end
     
-    screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "XorfhookCrosshair"
-    screenGui.Parent = lp:WaitForChild("PlayerGui")
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "XorfhookCrosshair"
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
     
     local size = getgenv().CrosshairSize or 10
     local thickness = getgenv().CrosshairThickness or 2
@@ -37,118 +38,119 @@ local function createCrosshair()
     local color = getgenv().CrosshairColor or Color3.fromRGB(255, 255, 255)
     local outline = getgenv().CrosshairOutline
     
-    -- Create lines
-    lines = {}
-    
-    local function createLine(name, pos, size)
+    -- Helper to create line
+    local function CreateLine(name, position, size)
         local frame = Instance.new("Frame")
         frame.Name = name
         frame.BackgroundColor3 = color
         frame.BorderSizePixel = 0
         frame.Size = size
-        frame.Position = pos
+        frame.Position = position
         frame.AnchorPoint = Vector2.new(0.5, 0.5)
-        frame.Parent = screenGui
-        
-        if outline then
-            frame.BorderSizePixel = 1
-            frame.BorderColor3 = Color3.fromRGB(0, 0, 0)
-        end
-        
-        return frame
-    end
-    
-    -- Top line
-    table.insert(lines, createLine("Top", 
-        UDim2.new(0.5, 0, 0.5, -gap - size/2), 
-        UDim2.new(0, thickness, 0, size)))
-    
-    -- Bottom line
-    table.insert(lines, createLine("Bottom", 
-        UDim2.new(0.5, 0, 0.5, gap + size/2), 
-        UDim2.new(0, thickness, 0, size)))
-    
-    -- Left line
-    table.insert(lines, createLine("Left", 
-        UDim2.new(0.5, -gap - size/2, 0.5, 0), 
-        UDim2.new(0, size, 0, thickness)))
-    
-    -- Right line
-    table.insert(lines, createLine("Right", 
-        UDim2.new(0.5, gap + size/2, 0.5, 0), 
-        UDim2.new(0, size, 0, thickness)))
-    
-    -- Center dot
-    if getgenv().CrosshairDot then
-        dot = Instance.new("Frame")
-        dot.Name = "Dot"
-        dot.BackgroundColor3 = color
-        dot.BorderSizePixel = 0
-        dot.Size = UDim2.new(0, math.max(thickness, 3), 0, math.max(thickness, 3))
-        dot.Position = UDim2.new(0.5, 0, 0.5, 0)
-        dot.AnchorPoint = Vector2.new(0.5, 0.5)
-        dot.Parent = screenGui
-        
-        -- Make it circular
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(1, 0)
-        corner.Parent = dot
+        frame.Parent = ScreenGui
         
         if outline then
             local stroke = Instance.new("UIStroke")
             stroke.Color = Color3.fromRGB(0, 0, 0)
             stroke.Thickness = 1
-            stroke.Parent = dot
+            stroke.Parent = frame
+        end
+        
+        return frame
+    end
+    
+    Lines = {}
+    
+    -- Top line
+    table.insert(Lines, CreateLine("Top", 
+        UDim2.new(0.5, 0, 0.5, -gap - size/2), 
+        UDim2.new(0, thickness, 0, size)))
+    
+    -- Bottom line
+    table.insert(Lines, CreateLine("Bottom", 
+        UDim2.new(0.5, 0, 0.5, gap + size/2), 
+        UDim2.new(0, thickness, 0, size)))
+    
+    -- Left line
+    table.insert(Lines, CreateLine("Left", 
+        UDim2.new(0.5, -gap - size/2, 0.5, 0), 
+        UDim2.new(0, size, 0, thickness)))
+    
+    -- Right line
+    table.insert(Lines, CreateLine("Right", 
+        UDim2.new(0.5, gap + size/2, 0.5, 0), 
+        UDim2.new(0, size, 0, thickness)))
+    
+    -- Center dot
+    if getgenv().CrosshairDot then
+        Dot = Instance.new("Frame")
+        Dot.Name = "Dot"
+        Dot.BackgroundColor3 = color
+        Dot.BorderSizePixel = 0
+        Dot.Size = UDim2.new(0, math.max(thickness, 3), 0, math.max(thickness, 3))
+        Dot.Position = UDim2.new(0.5, 0, 0.5, 0)
+        Dot.AnchorPoint = Vector2.new(0.5, 0.5)
+        Dot.Parent = ScreenGui
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(1, 0)
+        corner.Parent = Dot
+        
+        if outline then
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = Color3.fromRGB(0, 0, 0)
+            stroke.Thickness = 1
+            stroke.Parent = Dot
         end
     end
 end
 
 -- Update crosshair
-local function updateCrosshair()
+local function UpdateCrosshair()
     if not getgenv().CrosshairEnabled then
-        if screenGui then
-            screenGui.Enabled = false
+        if ScreenGui then
+            ScreenGui.Enabled = false
         end
         return
     end
     
-    if not screenGui or not screenGui.Parent then
-        createCrosshair()
+    if not ScreenGui or not ScreenGui.Parent then
+        CreateCrosshair()
     end
     
-    if screenGui then
-        screenGui.Enabled = true
+    if ScreenGui then
+        ScreenGui.Enabled = true
         
-        -- Update color if changed
+        -- Update color
         local color = getgenv().CrosshairColor or Color3.fromRGB(255, 255, 255)
-        for _, line in pairs(lines) do
+        for _, line in pairs(Lines) do
             if line then
                 line.BackgroundColor3 = color
             end
         end
-        if dot then
-            dot.BackgroundColor3 = color
+        if Dot then
+            Dot.BackgroundColor3 = color
         end
     end
 end
 
 -- Initial creation
-createCrosshair()
+CreateCrosshair()
 
 -- Update loop
-local connection = RunService.RenderStepped:Connect(function()
-    pcall(updateCrosshair)
+Connection = RunService.RenderStepped:Connect(function()
+    pcall(UpdateCrosshair)
 end)
 
 -- Cleanup
-getgenv().XorfhookCrosshairConnection = connection
+getgenv().XorfhookCrosshairConnection = Connection
 getgenv().XorfhookCrosshairCleanup = function()
-    if screenGui then
-        pcall(function() screenGui:Destroy() end)
+    if ScreenGui then
+        pcall(function() ScreenGui:Destroy() end)
     end
-    if connection then
-        connection:Disconnect()
+    if Connection then
+        Connection:Disconnect()
     end
 end
 
-print("[Xorfhook] Crosshair loaded (GUI version)")
+print("[Xorfhook] Crosshair loaded (YUB-X)")

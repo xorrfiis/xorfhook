@@ -16,27 +16,47 @@ getgenv().AimbotShowFOV = getgenv().AimbotShowFOV or false
 getgenv().TriggerbotEnabled = getgenv().TriggerbotEnabled or false
 getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
 
+-- Detect executor
+local ExecutorName = "Unknown"
+local XenoMultiplier = 1
+
+if typeof(Xeno) == "table" then
+    ExecutorName = "Xeno"
+    XenoMultiplier = -1
+elseif typeof(YUBX) == "table" then
+    ExecutorName = "YUB-X"
+elseif typeof(syn) == "table" then
+    ExecutorName = "Synapse"
+elseif typeof(fluxus) == "table" then
+    ExecutorName = "Fluxus"
+elseif typeof(KRNL) == "table" then
+    ExecutorName = "KRNL"
+end
+
+print("[Xorfhook] Detected executor: " .. ExecutorName)
+
 -- Universal mousemoverel
 local MouseMoveRel = nil
+
 local function GetMouseMoveRel()
     if MouseMoveRel then return MouseMoveRel end
     
     local options = {
-        mousemoverel,
-        (syn and syn.mousemoverel),
-        (fluxus and fluxus.mousemoverel),
-        (KRNL and KRNL.mousemoverel),
-        (YUBX and YUBX.mousemoverel),
-        (Xeno and Xeno.mousemoverel),
-        (getgenv().mousemoverel),
-        mousemove,
-        MoveMouse
+        {func = mousemoverel, name = "global mousemoverel"},
+        {func = (syn and syn.mousemoverel), name = "syn.mousemoverel"},
+        {func = (fluxus and fluxus.mousemoverel), name = "fluxus.mousemoverel"},
+        {func = (KRNL and KRNL.mousemoverel), name = "KRNL.mousemoverel"},
+        {func = (YUBX and YUBX.mousemoverel), name = "YUBX.mousemoverel"},
+        {func = (Xeno and Xeno.mousemoverel), name = "Xeno.mousemoverel"},
+        {func = (getgenv().mousemoverel), name = "getgenv().mousemoverel"},
+        {func = mousemove, name = "mousemove"},
+        {func = MoveMouse, name = "MoveMouse"}
     }
     
     for _, opt in ipairs(options) do
-        if typeof(opt) == "function" then
-            MouseMoveRel = opt
-            print("[Xorfhook Aimbot] mousemoverel found")
+        if typeof(opt.func) == "function" then
+            MouseMoveRel = opt.func
+            print("[Xorfhook Aimbot] Using: " .. opt.name)
             return MouseMoveRel
         end
     end
@@ -121,7 +141,6 @@ local LastTargetTime = 0
 local function GetTarget()
     local now = tick()
     
-    -- Cache for 50ms
     if LastTarget and (now - LastTargetTime) < 0.05 then
         if LastTarget.Part and LastTarget.Part.Parent then
             local humanoid = LastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
@@ -149,7 +168,6 @@ local function GetTarget()
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if not humanoid or humanoid.Health <= 0 then continue end
         
-        -- Team check
         if getgenv().AimbotTeamCheck then
             if player.Team == localTeam or player.TeamColor == localTeamColor then
                 continue
@@ -165,7 +183,6 @@ local function GetTarget()
         local distanceFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
         
         if distanceFromMouse < shortestDistance then
-            -- Wall check last
             if getgenv().AimbotWallCheck and not IsVisible(targetPart) then
                 continue
             end
@@ -216,7 +233,6 @@ local function CheckTriggerbot()
                     local delay = getgenv().TriggerbotDelay or 0
                     
                     task.delay(delay / 1000, function()
-                        -- Click mouse
                         if mouse1press and mouse1release then
                             mouse1press()
                             task.wait(0.01)
@@ -242,7 +258,7 @@ local Connection = RunService.RenderStepped:Connect(function()
     FrameCount = FrameCount + 1
     
     local success, err = pcall(function()
-        -- Update FOV Circle (every frame for smoothness)
+        -- Update FOV Circle
         if FOVCircle then
             local showCircle = getgenv().AimbotShowFOV and getgenv().AimbotEnabled
             FOVCircle.Visible = showCircle
@@ -264,12 +280,12 @@ local Connection = RunService.RenderStepped:Connect(function()
             end
         end
         
-        -- Triggerbot (every other frame)
+        -- Triggerbot
         if getgenv().TriggerbotEnabled and FrameCount % 2 == 0 then
             CheckTriggerbot()
         end
         
-        -- Aimbot (only when right mouse held)
+        -- Aimbot
         if getgenv().AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = GetTarget()
             
@@ -277,8 +293,13 @@ local Connection = RunService.RenderStepped:Connect(function()
                 local mousePos = UserInputService:GetMouseLocation()
                 local smoothness = math.clamp(getgenv().AimbotSmoothness or 1, 0.1, 10)
                 
+                -- Calculate delta
                 local deltaX = (target.ScreenPosition.X - mousePos.X) / smoothness
                 local deltaY = (target.ScreenPosition.Y - mousePos.Y) / smoothness
+                
+                -- Apply Xeno multiplier (fixes inverted movement)
+                deltaX = deltaX * XenoMultiplier
+                deltaY = deltaY * XenoMultiplier
                 
                 -- Skip tiny movements
                 if math.abs(deltaX) < 0.5 and math.abs(deltaY) < 0.5 then
@@ -287,17 +308,10 @@ local Connection = RunService.RenderStepped:Connect(function()
                 
                 local mover = GetMouseMoveRel()
                 if mover then
-                    -- Try integer first
-                    local ok = pcall(function()
-                        mover(math.floor(deltaX), math.floor(deltaY))
+                    -- Use floats directly - no rounding
+                    pcall(function()
+                        mover(deltaX, deltaY)
                     end)
-                    
-                    -- Fallback to float
-                    if not ok then
-                        pcall(function()
-                            mover(deltaX, deltaY)
-                        end)
-                    end
                 end
             end
         end
@@ -308,7 +322,6 @@ local Connection = RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Cleanup
 getgenv().XorfhookAimbotConnection = Connection
 
-print("[Xorfhook] Aimbot loaded - Right click to aim, enable Triggerbot for auto-shoot")
+print("[Xorfhook] Aimbot loaded on " .. ExecutorName)

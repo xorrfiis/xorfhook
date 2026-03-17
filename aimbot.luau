@@ -16,66 +16,63 @@ getgenv().AimbotShowFOV = getgenv().AimbotShowFOV or false
 getgenv().TriggerbotEnabled = getgenv().TriggerbotEnabled or false
 getgenv().TriggerbotDelay = getgenv().TriggerbotDelay or 0
 
--- Detect executor
-local ExecutorName = "Unknown"
-local XenoMultiplier = 1
+-- DEBUG: Print settings on load
+print("[Xorfhook Aimbot] Settings loaded:")
+print("  Enabled: " .. tostring(getgenv().AimbotEnabled))
+print("  FOV: " .. tostring(getgenv().AimbotFOV))
+print("  Smoothness: " .. tostring(getgenv().AimbotSmoothness))
 
-if typeof(Xeno) == "table" then
-    ExecutorName = "Xeno"
-    XenoMultiplier = -1
-elseif typeof(YUBX) == "table" then
-    ExecutorName = "YUB-X"
-elseif typeof(syn) == "table" then
-    ExecutorName = "Synapse"
-elseif typeof(fluxus) == "table" then
-    ExecutorName = "Fluxus"
-elseif typeof(KRNL) == "table" then
-    ExecutorName = "KRNL"
-end
-
-print("[Xorfhook] Detected executor: " .. ExecutorName)
-
--- Universal mousemoverel
+-- YUB-X mousemoverel
 local MouseMoveRel = nil
 
 local function GetMouseMoveRel()
     if MouseMoveRel then return MouseMoveRel end
     
-    local options = {
-        {func = mousemoverel, name = "global mousemoverel"},
-        {func = (syn and syn.mousemoverel), name = "syn.mousemoverel"},
-        {func = (fluxus and fluxus.mousemoverel), name = "fluxus.mousemoverel"},
-        {func = (KRNL and KRNL.mousemoverel), name = "KRNL.mousemoverel"},
-        {func = (YUBX and YUBX.mousemoverel), name = "YUBX.mousemoverel"},
-        {func = (Xeno and Xeno.mousemoverel), name = "Xeno.mousemoverel"},
-        {func = (getgenv().mousemoverel), name = "getgenv().mousemoverel"},
-        {func = mousemove, name = "mousemove"},
-        {func = MoveMouse, name = "MoveMouse"}
-    }
+    -- Try YUB-X first
+    if typeof(YUBX) == "table" and typeof(YUBX.mousemoverel) == "function" then
+        MouseMoveRel = YUBX.mousemoverel
+        print("[Xorfhook] Using YUBX.mousemoverel")
+        return MouseMoveRel
+    end
     
-    for _, opt in ipairs(options) do
-        if typeof(opt.func) == "function" then
-            MouseMoveRel = opt.func
-            print("[Xorfhook Aimbot] Using: " .. opt.name)
-            return MouseMoveRel
+    -- Fallbacks
+    if typeof(mousemoverel) == "function" then
+        MouseMoveRel = mousemoverel
+        print("[Xorfhook] Using global mousemoverel")
+    elseif typeof(syn) == "table" and typeof(syn.mousemoverel) == "function" then
+        MouseMoveRel = syn.mousemoverel
+        print("[Xorfhook] Using syn.mousemoverel")
+    else
+        local VIM = game:GetService("VirtualInputManager")
+        MouseMoveRel = function(x, y)
+            local currentPos = UserInputService:GetMouseLocation()
+            VIM:SendMouseMoveEvent(currentPos.X + x, currentPos.Y + y, game)
         end
+        print("[Xorfhook] Using VIM fallback")
     end
     
-    -- Fallback
-    local VIM = game:GetService("VirtualInputManager")
-    MouseMoveRel = function(x, y)
-        local currentPos = UserInputService:GetMouseLocation()
-        VIM:SendMouseMoveEvent(currentPos.X + x, currentPos.Y + y, game)
-    end
-    print("[Xorfhook Aimbot] Using VIM fallback")
     return MouseMoveRel
 end
+
+-- Test mousemoverel on load
+task.spawn(function()
+    task.wait(1)
+    local mover = GetMouseMoveRel()
+    if mover then
+        print("[Xorfhook] MouseMoveRel ready!")
+    else
+        warn("[Xorfhook] MouseMoveRel NOT FOUND!")
+    end
+end)
 
 -- Drawing setup
 local FOVCircle = nil
 local function SetupFOVCircle()
     if FOVCircle then return end
-    if not Drawing then return end
+    if not Drawing then 
+        warn("[Xorfhook] Drawing library not available!")
+        return 
+    end
     
     local success, result = pcall(function()
         local circle = Drawing.new("Circle")
@@ -90,6 +87,9 @@ local function SetupFOVCircle()
     
     if success then
         FOVCircle = result
+        print("[Xorfhook] FOV Circle created")
+    else
+        warn("[Xorfhook] Failed to create FOV Circle: " .. tostring(result))
     end
 end
 
@@ -141,6 +141,7 @@ local LastTargetTime = 0
 local function GetTarget()
     local now = tick()
     
+    -- Cache for 50ms
     if LastTarget and (now - LastTargetTime) < 0.05 then
         if LastTarget.Part and LastTarget.Part.Parent then
             local humanoid = LastTarget.Part.Parent:FindFirstChildOfClass("Humanoid")
@@ -158,9 +159,15 @@ local function GetTarget()
     
     local allPlayers = Players:GetPlayers()
     
+    -- DEBUG: Count players
+    local checked = 0
+    local valid = 0
+    
     for i = 1, #allPlayers do
         local player = allPlayers[i]
         if player == LocalPlayer then continue end
+        
+        checked = checked + 1
         
         local character = player.Character
         if not character then continue end
@@ -168,6 +175,7 @@ local function GetTarget()
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if not humanoid or humanoid.Health <= 0 then continue end
         
+        -- Team check
         if getgenv().AimbotTeamCheck then
             if player.Team == localTeam or player.TeamColor == localTeamColor then
                 continue
@@ -183,10 +191,12 @@ local function GetTarget()
         local distanceFromMouse = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
         
         if distanceFromMouse < shortestDistance then
+            -- Wall check last
             if getgenv().AimbotWallCheck and not IsVisible(targetPart) then
                 continue
             end
             
+            valid = valid + 1
             shortestDistance = distanceFromMouse
             closestTarget = {
                 Player = player,
@@ -194,6 +204,11 @@ local function GetTarget()
                 ScreenPosition = Vector2.new(screenPos.X, screenPos.Y)
             }
         end
+    end
+    
+    -- DEBUG: Print target info occasionally
+    if closestTarget and (now % 1 < 0.1) then
+        print("[Xorfhook] Target: " .. closestTarget.Player.Name .. " | Dist: " .. math.floor(shortestDistance))
     end
     
     LastTarget = closestTarget
@@ -254,8 +269,10 @@ end
 
 -- Main loop
 local FrameCount = 0
-local Connection = RunService.RenderStepped:Connect(function()
+local DebugTimer = 0
+local Connection = RunService.RenderStepped:Connect(function(deltaTime)
     FrameCount = FrameCount + 1
+    DebugTimer = DebugTimer + deltaTime
     
     local success, err = pcall(function()
         -- Update FOV Circle
@@ -285,6 +302,13 @@ local Connection = RunService.RenderStepped:Connect(function()
             CheckTriggerbot()
         end
         
+        -- DEBUG: Print status every 2 seconds
+        if DebugTimer > 2 then
+            DebugTimer = 0
+            local rightMouse = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+            print("[Xorfhook] Status - Enabled: " .. tostring(getgenv().AimbotEnabled) .. " | RightClick: " .. tostring(rightMouse))
+        end
+        
         -- Aimbot
         if getgenv().AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
             local target = GetTarget()
@@ -297,9 +321,10 @@ local Connection = RunService.RenderStepped:Connect(function()
                 local deltaX = (target.ScreenPosition.X - mousePos.X) / smoothness
                 local deltaY = (target.ScreenPosition.Y - mousePos.Y) / smoothness
                 
-                -- Apply Xeno multiplier (fixes inverted movement)
-                deltaX = deltaX * XenoMultiplier
-                deltaY = deltaY * XenoMultiplier
+                -- DEBUG: Print movement occasionally
+                if FrameCount % 60 == 0 then
+                    print("[Xorfhook] Moving: dx=" .. string.format("%.2f", deltaX) .. " dy=" .. string.format("%.2f", deltaY))
+                end
                 
                 -- Skip tiny movements
                 if math.abs(deltaX) < 0.5 and math.abs(deltaY) < 0.5 then
@@ -308,10 +333,16 @@ local Connection = RunService.RenderStepped:Connect(function()
                 
                 local mover = GetMouseMoveRel()
                 if mover then
-                    -- Use floats directly - no rounding
                     pcall(function()
                         mover(deltaX, deltaY)
                     end)
+                else
+                    warn("[Xorfhook] No mouse mover available!")
+                end
+            else
+                -- DEBUG: No target
+                if FrameCount % 120 == 0 then
+                    print("[Xorfhook] No target found")
                 end
             end
         end
@@ -324,4 +355,5 @@ end)
 
 getgenv().XorfhookAimbotConnection = Connection
 
-print("[Xorfhook] Aimbot loaded on " .. ExecutorName)
+print("[Xorfhook] Aimbot loaded (DEBUG MODE)")
+print("[Xorfhook] Right-click to aim. Check console for debug info.")
